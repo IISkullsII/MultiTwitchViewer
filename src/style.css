@@ -5,6 +5,7 @@
 }
 
 :root {
+  color-scheme: dark;
   --bg-primary: #0e0e10;
   --bg-secondary: #18181b;
   --bg-tertiary: #1f1f23;
@@ -14,6 +15,19 @@
   --accent-hover: #772ce8;
   --border: #2f2f35;
   --danger: #eb0400;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --bg-primary: #f7f7f8;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #f0f0f3;
+  --text-primary: #18181b;
+  --text-secondary: #53535f;
+  --accent: #9147ff;
+  --accent-hover: #772ce8;
+  --border: #d9d9e0;
+  --danger: #d4000a;
 }
 
 html, body {

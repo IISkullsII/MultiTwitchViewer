@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, watchEffect, onMounted, onBeforeUnmount } from 'vue'
 import type { StreamEntry, PlayerMode } from './types'
 import { useTwitchEmbed } from './composables/useTwitchEmbed'
 import { useSync } from './composables/useSync'
@@ -24,6 +24,12 @@ const twitchReady = ref(false)
 const loadError = ref(false)
 const panelOpen = ref(true)
 const viewMode = ref<'tiled' | 'focused'>('tiled')
+const lightTheme = ref(false)
+
+watchEffect(() => {
+  document.documentElement.dataset.theme = lightTheme.value ? 'light' : 'dark'
+})
+
 const showLatency = ref(true)
 const keepChatsLoaded = ref(true)
 const chatOpen = ref(true)
@@ -59,6 +65,10 @@ function loadFromUrl() {
         addStream(parsed.channel, 'live', '')
       }
     }
+  }
+
+  if (entries.value.length > 0) {
+    setActiveAudio(entries.value[0].id)
   }
 }
 
@@ -254,6 +264,7 @@ const thumbVars = computed(() => ({
           @set-active-audio="setActiveAudio"
         />
         <SettingsSection
+          v-model:light-theme="lightTheme"
           v-model:show-latency="showLatency"
           v-model:keep-chats-loaded="keepChatsLoaded"
         />
@@ -396,6 +407,7 @@ const thumbVars = computed(() => ({
       :width="chatWidth"
       :collapsed="!chatOpen"
       :keep-loaded="keepChatsLoaded"
+      :dark-chat="!lightTheme"
       @select="chatChannel = $event"
       @toggle="chatOpen = !chatOpen"
     />

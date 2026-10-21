@@ -1,10 +1,11 @@
 <script setup lang="ts">
-defineProps<{
+const props = defineProps<{
   channels: string[]
   activeChannel: string | null
   width: number
   collapsed: boolean
   keepLoaded: boolean
+  darkChat: boolean
 }>()
 
 const emit = defineEmits<{
@@ -15,7 +16,8 @@ const emit = defineEmits<{
 const parent = window.location.hostname || 'localhost'
 
 function chatUrl(channel: string): string {
-  return `https://www.twitch.tv/embed/${encodeURIComponent(channel)}/chat?parent=${encodeURIComponent(parent)}`
+  const theme = props.darkChat ? '&darkpopout' : ''
+  return `https://www.twitch.tv/embed/${encodeURIComponent(channel)}/chat?parent=${encodeURIComponent(parent)}${theme}`
 }
 </script>
 

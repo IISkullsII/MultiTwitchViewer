@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 
+const lightTheme = defineModel<boolean>('lightTheme', { required: true })
 const showLatency = defineModel<boolean>('showLatency', { required: true })
 const keepChatsLoaded = defineModel<boolean>('keepChatsLoaded', { required: true })
 
@@ -15,12 +16,16 @@ const open = ref(false)
     </button>
     <div v-if="open" class="settings-body">
       <label class="setting-row">
-        <span>Debug: Latenz anzeigen</span>
-        <input v-model="showLatency" type="checkbox" />
+        <span>Helles Design</span>
+        <input v-model="lightTheme" type="checkbox" />
       </label>
       <label class="setting-row">
         <span>Chats im Hintergrund laden</span>
         <input v-model="keepChatsLoaded" type="checkbox" />
+      </label>
+      <label class="setting-row">
+        <span>Debug information</span>
+        <input v-model="showLatency" type="checkbox" />
       </label>
     </div>
   </div>
