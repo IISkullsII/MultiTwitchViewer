@@ -131,6 +131,31 @@ const showPlayback = computed(
   () => entries.value.length === 0 || entries.value.some((e) => e.mode === 'vod'),
 )
 
+const gridEl = ref<HTMLElement | null>(null)
+const stripPx = ref<number | null>(null)
+const stripPxStyle = computed(() => (stripPx.value === null ? undefined : `${stripPx.value}px`))
+const HANDLE_GAP = 8
+let resizing = false
+
+function startResize(e: PointerEvent) {
+  resizing = true
+  const target = e.currentTarget as HTMLElement
+  target.setPointerCapture(e.pointerId)
+}
+
+function onResize(e: PointerEvent) {
+  if (!resizing || !gridEl.value) return
+  const bottom = gridEl.value.getBoundingClientRect().bottom
+  const minPx = window.innerHeight * 0.25 - HANDLE_GAP
+  const maxPx = window.innerHeight * 0.75 - HANDLE_GAP
+  const next = bottom - e.clientY - HANDLE_GAP / 2
+  stripPx.value = Math.round(Math.min(Math.max(next, minPx), maxPx))
+}
+
+function endResize() {
+  resizing = false
+}
+
 const thumbCount = computed(() => Math.max(entries.value.length - 1, 0))
 const thumbRows = computed(() => (thumbCount.value > 5 ? 2 : 1))
 const thumbVars = computed(() => ({
@@ -205,11 +230,12 @@ const thumbVars = computed(() => ({
 
     <section
       class="grid"
+      ref="gridEl"
       :class="{
         'focus-mode': viewMode === 'focused',
         'has-thumbs': viewMode === 'focused' && entries.length > 1,
       }"
-      :style="{ '--cols': getColumnCount(), ...thumbVars }"
+      :style="{ '--cols': getColumnCount(), ...thumbVars, '--strip-px': stripPxStyle }"
       v-if="entries.length > 0"
     >
       <div
@@ -260,6 +286,14 @@ const thumbVars = computed(() => ({
           </div>
         </div>
       </div>
+      <div
+        v-if="viewMode === 'focused' && entries.length > 1"
+        class="resize-handle"
+        @pointerdown="startResize"
+        @pointermove="onResize"
+        @pointerup="endResize"
+        @pointercancel="endResize"
+      ></div>
     </section>
 
     <section class="empty-state" v-else-if="loadError">
@@ -371,8 +405,9 @@ const thumbVars = computed(() => ({
 }
 
 .grid {
-  --strip-h: 320px;
   --gap: 8px;
+  --strip-h: clamp(calc(25vh - var(--gap)), var(--strip-px, 25vh), calc(75vh - var(--gap)));
+  position: relative;
   flex: 1;
   display: grid;
   grid-template-columns: repeat(var(--cols), 1fr);
@@ -416,6 +451,32 @@ const thumbVars = computed(() => ({
 
 .thumb-overlay:hover {
   box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.resize-handle {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% - var(--strip-h) - var(--gap) / 2 - 6px);
+  height: 12px;
+  z-index: 2;
+  cursor: row-resize;
+  touch-action: none;
+}
+
+.resize-handle::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 2px;
+  transform: translateY(-50%);
+  background: var(--border);
+}
+
+.resize-handle:hover::after {
+  background: var(--accent);
 }
 
 .thumb-actions {
