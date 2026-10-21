@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import type { StreamEntry, PlayerMode } from './types'
 import { useTwitchEmbed } from './composables/useTwitchEmbed'
 import { useSync } from './composables/useSync'
@@ -21,6 +21,8 @@ const { syncOnce, recordAllOffsets, ensureMaster } =
 const twitchReady = ref(false)
 const loadError = ref(false)
 const panelOpen = ref(true)
+const viewMode = ref<'tiled' | 'focused'>('tiled')
+const focusedId = ref<string | null>(null)
 
 onMounted(async () => {
   try {
@@ -77,6 +79,37 @@ function removeStream(id: string) {
   destroyPlayer(id)
   entries.value = entries.value.filter((e) => e.id !== id)
   ensureMaster()
+
+  if (entries.value.length === 0) {
+    viewMode.value = 'tiled'
+    focusedId.value = null
+  } else if (focusedId.value === id) {
+    focusedId.value = defaultFocusId()
+  }
+}
+
+function defaultFocusId(): string | null {
+  const audible = entries.value.find((e) => e.id === activeAudioId.value)
+  return audible?.id ?? entries.value[0]?.id ?? null
+}
+
+function focusStream(id: string) {
+  focusedId.value = id
+}
+
+function focusAndPlayAudio(id: string) {
+  focusStream(id)
+  setActiveAudio(id)
+}
+
+function toggleViewMode() {
+  if (viewMode.value === 'focused') {
+    viewMode.value = 'tiled'
+    return
+  }
+  if (entries.value.length === 0) return
+  focusedId.value = defaultFocusId()
+  viewMode.value = 'focused'
 }
 
 function handlePlayerReady(id: string) {
@@ -93,6 +126,17 @@ function getColumnCount(): string {
   if (count <= 9) return '3'
   return '4'
 }
+
+const showPlayback = computed(
+  () => entries.value.length === 0 || entries.value.some((e) => e.mode === 'vod'),
+)
+
+const thumbCount = computed(() => Math.max(entries.value.length - 1, 0))
+const thumbRows = computed(() => (thumbCount.value > 5 ? 2 : 1))
+const thumbVars = computed(() => ({
+  '--thumb-cols': String(Math.max(1, Math.ceil(thumbCount.value / thumbRows.value))),
+  '--thumb-rows': String(thumbRows.value),
+}))
 </script>
 
 <template>
@@ -103,9 +147,17 @@ function getColumnCount(): string {
       </button>
       <div class="panel-content" v-show="panelOpen">
         <AddStreamForm v-if="twitchReady" @add="addStream" />
+        <button
+          class="view-toggle"
+          :disabled="entries.length === 0"
+          @click="toggleViewMode"
+        >
+          {{ viewMode === 'tiled' ? 'Fokusmodus' : 'Kachelmodus' }}
+        </button>
         <PlayerControls
           :entries="entries"
           :active-audio-id="activeAudioId"
+          :show-playback="showPlayback"
           @play-all="playAll"
           @pause-all="pauseAll"
           @remove="removeStream"
@@ -119,8 +171,17 @@ function getColumnCount(): string {
       </div>
       <div class="panel-compact" v-show="!panelOpen">
         <div class="spacer" style="height: 136px"></div>
-        <button class="icon-btn" title="Alle starten" @click="playAll" style="margin-bottom: 6px;">&#9654;</button>
-        <button class="icon-btn" title="Alle pausieren" @click="pauseAll">&#10074;&#10074;</button>
+        <button
+          class="icon-btn"
+          :title="viewMode === 'tiled' ? 'Fokusmodus' : 'Kachelmodus'"
+          :disabled="entries.length === 0"
+          @click="toggleViewMode"
+          style="margin-bottom: 6px;"
+        >&#9633;</button>
+        <template v-if="showPlayback">
+          <button class="icon-btn" title="Alle starten" @click="playAll" style="margin-bottom: 6px;">&#9654;</button>
+          <button class="icon-btn" title="Alle pausieren" @click="pauseAll">&#10074;&#10074;</button>
+        </template>
         <div class="spacer" style="height: 32px"></div>
         <template v-for="entry in entries" :key="entry.id">
           <button
@@ -144,13 +205,18 @@ function getColumnCount(): string {
 
     <section
       class="grid"
-      :style="{ '--cols': getColumnCount() }"
+      :class="{
+        'focus-mode': viewMode === 'focused',
+        'has-thumbs': viewMode === 'focused' && entries.length > 1,
+      }"
+      :style="{ '--cols': getColumnCount(), ...thumbVars }"
       v-if="entries.length > 0"
     >
       <div
         v-for="entry in entries"
         :key="entry.id"
         class="grid-item"
+        :class="{ 'is-focused': viewMode === 'focused' && entry.id === focusedId }"
       >
         <TwitchPlayerCard
           :entry="entry"
@@ -158,6 +224,41 @@ function getColumnCount(): string {
           :destroy-player="destroyPlayer"
           @player-ready="handlePlayerReady"
         />
+        <div
+          v-if="viewMode === 'focused' && entry.id !== focusedId"
+          class="thumb-overlay"
+          @click="focusStream(entry.id)"
+        >
+          <div class="thumb-actions">
+            <button
+              class="thumb-action"
+              title="Nur fokussieren"
+              aria-label="Nur fokussieren"
+              @click.stop="focusStream(entry.id)"
+            >
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                <circle cx="12" cy="12" r="8" />
+                <circle cx="12" cy="12" r="2" />
+                <line x1="12" y1="1" x2="12" y2="4" />
+                <line x1="12" y1="20" x2="12" y2="23" />
+                <line x1="1" y1="12" x2="4" y2="12" />
+                <line x1="20" y1="12" x2="23" y2="12" />
+              </svg>
+            </button>
+            <button
+              class="thumb-action"
+              title="Fokussieren + Ton"
+              aria-label="Fokussieren + Ton"
+              @click.stop="focusAndPlayAudio(entry.id)"
+            >
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M11 5 6 9H2v6h4l5 4V5z" />
+                <path d="M15.5 8.5a5 5 0 0 1 0 7" />
+                <path d="M19 5a10 10 0 0 1 0 14" />
+              </svg>
+            </button>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -270,6 +371,8 @@ function getColumnCount(): string {
 }
 
 .grid {
+  --strip-h: 320px;
+  --gap: 8px;
   flex: 1;
   display: grid;
   grid-template-columns: repeat(var(--cols), 1fr);
@@ -279,6 +382,96 @@ function getColumnCount(): string {
 .grid-item {
   position: relative;
   overflow: hidden;
+}
+
+.grid.focus-mode {
+  grid-template-columns: repeat(var(--thumb-cols), minmax(0, 1fr));
+  grid-template-rows: minmax(0, 1fr) repeat(
+    var(--thumb-rows),
+    minmax(0, calc((var(--strip-h) - (var(--thumb-rows) - 1) * var(--gap)) / var(--thumb-rows)))
+  );
+  gap: var(--gap);
+}
+
+.grid.focus-mode:not(.has-thumbs) {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.grid.focus-mode .grid-item {
+  min-width: 0;
+  min-height: 0;
+}
+
+.grid.focus-mode .grid-item.is-focused {
+  grid-column: 1 / -1;
+  grid-row: 1;
+}
+
+.thumb-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  cursor: pointer;
+}
+
+.thumb-overlay:hover {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.thumb-actions {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: rgba(0, 0, 0, 0.55);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.thumb-overlay:hover .thumb-actions {
+  opacity: 1;
+}
+
+.thumb-action {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.thumb-action:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.view-toggle {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.view-toggle:hover:not(:disabled) {
+  background: var(--border);
+}
+
+.view-toggle:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .empty-state {

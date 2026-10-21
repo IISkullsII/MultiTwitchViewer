@@ -4,6 +4,7 @@ import type { StreamEntry } from '../types'
 defineProps<{
   entries: StreamEntry[]
   activeAudioId: string | null
+  showPlayback: boolean
 }>()
 
 const emit = defineEmits<{
@@ -17,14 +18,16 @@ const emit = defineEmits<{
 <template>
   <div class="player-controls">
     <h3 class="section-title">Wiedergabe</h3>
-    <div class="control-row" @click="emit('playAll')">
-      <span>Alle starten</span>
-      <span class="symbol">&#9654;</span>
-    </div>
-    <div class="control-row" @click="emit('pauseAll')">
-      <span>Alle pausieren</span>
-      <span class="symbol">&#10074;&#10074;</span>
-    </div>
+    <template v-if="showPlayback">
+      <div class="control-row" @click="emit('playAll')">
+        <span>Alle starten</span>
+        <span class="symbol">&#9654;</span>
+      </div>
+      <div class="control-row" @click="emit('pauseAll')">
+        <span>Alle pausieren</span>
+        <span class="symbol">&#10074;&#10074;</span>
+      </div>
+    </template>
 
     <template v-if="entries.length > 0">
       <h3 class="section-title">Streams</h3>
