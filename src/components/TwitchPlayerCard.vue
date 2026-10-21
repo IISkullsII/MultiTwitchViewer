@@ -1,12 +1,11 @@
 <script setup lang="ts">
-import { onMounted, onBeforeUnmount, ref, watch } from 'vue'
+import { onMounted, onBeforeUnmount, ref } from 'vue'
 import type { StreamEntry } from '../types'
 import type { TwitchPlayer as TwitchPlayerType } from '../composables/useTwitchEmbed'
 
 const props = defineProps<{
   entry: StreamEntry
   createPlayer: (containerId: string, entry: StreamEntry) => TwitchPlayerType | null
-  getPlayer: (id: string) => TwitchPlayerType | undefined
   destroyPlayer: (id: string) => void
 }>()
 
@@ -15,29 +14,22 @@ const emit = defineEmits<{
 }>()
 
 const containerId = `twitch-player-${props.entry.id}`
-const isLoaded = ref(false)
+const hasError = ref(false)
 
 function initPlayer() {
   const player = props.createPlayer(containerId, props.entry)
-  if (player) {
-    player.addEventListener('ready', () => {
-      isLoaded.value = true
-      emit('playerReady', props.entry.id)
-    })
+  if (!player) {
+    hasError.value = true
+    return
   }
+  player.addEventListener('ready', () => {
+    emit('playerReady', props.entry.id)
+  })
 }
 
 onMounted(() => {
   initPlayer()
 })
-
-watch(
-  () => props.entry.vodId,
-  () => {
-    isLoaded.value = false
-    initPlayer()
-  },
-)
 
 onBeforeUnmount(() => {
   props.destroyPlayer(props.entry.id)
@@ -47,6 +39,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="player-wrapper" :class="{ 'is-master': entry.isMaster }">
     <div :id="containerId" class="player-container" height="300" width="400"></div>
+    <div v-if="hasError" class="player-error">Player konnte nicht geladen werden</div>
   </div>
 </template>
 
@@ -71,5 +64,15 @@ onBeforeUnmount(() => {
   width: 100%;
   height: 100%;
   border: none;
+}
+
+.player-error {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  font-size: 13px;
 }
 </style>

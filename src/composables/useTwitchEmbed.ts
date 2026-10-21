@@ -34,7 +34,7 @@ export function useTwitchEmbed() {
   function setInitialVolume(id: string, isMaster: boolean) {
     const player = playerInstances.get(id)
     if (!player) return
-    if (isMaster) {
+    if (activeAudioId.value === id || (activeAudioId.value === null && isMaster)) {
       player.setVolume(activeVolume.value)
       activeAudioId.value = id
     } else {
@@ -62,7 +62,7 @@ export function useTwitchEmbed() {
   }
 
   function loadTwitchIframe(): Promise<void> {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       if (document.getElementById('twitch-embed-script')) {
         resolve()
         return
@@ -73,6 +73,10 @@ export function useTwitchEmbed() {
       script.onload = () => {
         iframeReady.value = true
         resolve()
+      }
+      script.onerror = () => {
+        script.remove()
+        reject(new Error('Twitch embed script could not be loaded'))
       }
       document.head.appendChild(script)
     })
@@ -115,16 +119,26 @@ export function useTwitchEmbed() {
 
   function destroyPlayer(id: string) {
     const player = playerInstances.get(id)
-    if (player) {
-      player.destroy()
-      playerInstances.delete(id)
+    if (!player) return
+
+    player.destroy()
+    playerInstances.delete(id)
+
+    if (activeAudioId.value === id) {
+      activeAudioId.value = null
+      const nextId = [...playerInstances.keys()][0]
+      if (nextId) {
+        setActiveAudio(nextId)
+      }
     }
   }
 
   function destroyAll() {
-    for (const [id] of playerInstances) {
-      destroyPlayer(id)
+    for (const player of playerInstances.values()) {
+      player.destroy()
     }
+    playerInstances.clear()
+    activeAudioId.value = null
   }
 
   onBeforeUnmount(() => {

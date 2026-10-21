@@ -1,9 +1,9 @@
-import { ref, watch } from 'vue'
+import { ref } from 'vue'
 import type { StreamEntry, SyncState } from '../types'
 import type { TwitchPlayer } from './useTwitchEmbed'
 
 export function useSync(
-  entries: StreamEntry[],
+  getEntries: () => StreamEntry[],
   getPlayer: (id: string) => TwitchPlayer | undefined,
 ) {
   const syncState = ref<SyncState>({
@@ -14,14 +14,26 @@ export function useSync(
   const offsets = ref<Map<string, number>>(new Map())
 
   function getMasterEntry(): StreamEntry | undefined {
-    return entries.find((e) => e.isMaster)
+    return getEntries().find((e) => e.isMaster)
   }
 
   function setMaster(entryId: string) {
-    entries.forEach((e) => {
+    getEntries().forEach((e) => {
       e.isMaster = e.id === entryId
     })
     syncState.value.masterId = entryId
+  }
+
+  function ensureMaster() {
+    const entries = getEntries()
+    if (entries.some((e) => e.isMaster)) return
+
+    const candidate = entries.find((e) => e.mode === 'vod')
+    if (candidate) {
+      setMaster(candidate.id)
+    } else {
+      syncState.value.masterId = null
+    }
   }
 
   function getMasterTime(): number {
@@ -46,7 +58,7 @@ export function useSync(
 
     offsets.value.set(slaveId, offset)
 
-    const entry = entries.find((e) => e.id === slaveId)
+    const entry = getEntries().find((e) => e.id === slaveId)
     if (entry) {
       entry.offset = offset
     }
@@ -80,7 +92,7 @@ export function useSync(
 
     syncState.value.lastMasterTime = masterPlayer.getCurrentTime()
 
-    for (const entry of entries) {
+    for (const entry of getEntries()) {
       if (entry.isMaster || entry.mode === 'live') continue
       seekSlaveToMaster(entry.id)
     }
@@ -90,7 +102,7 @@ export function useSync(
     const master = getMasterEntry()
     if (!master) return
 
-    for (const entry of entries) {
+    for (const entry of getEntries()) {
       if (entry.isMaster || entry.mode === 'live') continue
       recordOffset(entry.id)
     }
@@ -100,19 +112,11 @@ export function useSync(
     syncAll()
   }
 
-  watch(
-    () => entries.filter((e) => e.isMaster).length,
-    (count) => {
-      if (count === 0) {
-        syncState.value.masterId = null
-      }
-    },
-  )
-
   return {
     syncState,
     offsets,
     setMaster,
+    ensureMaster,
     syncOnce,
     recordAllOffsets,
     getMasterTime,

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import type { PlayerMode } from '../types'
+import { parseStreamInput } from '../utils/parseStreamInput'
 
 const emit = defineEmits<{
   add: [channel: string, mode: PlayerMode, vodId: string]
@@ -8,24 +9,7 @@ const emit = defineEmits<{
 
 const input = ref('')
 
-function parseInput(raw: string): { channel: string; mode: PlayerMode; vodId: string } | null {
-  const trimmed = raw.trim()
-  if (!trimmed) return null
-
-  const vodMatch = trimmed.match(/twitch\.tv\/videos\/(\d+)/)
-  if (vodMatch) {
-    return { channel: '', mode: 'vod', vodId: vodMatch[1] }
-  }
-
-  const channelMatch = trimmed.match(/twitch\.tv\/(\w+)/)
-  if (channelMatch) {
-    return { channel: channelMatch[1], mode: 'live', vodId: '' }
-  }
-
-  return { channel: trimmed, mode: 'live', vodId: '' }
-}
-
-const parsed = computed(() => parseInput(input.value))
+const parsed = computed(() => parseStreamInput(input.value))
 const detectedType = computed(() => parsed.value?.mode ?? null)
 
 function handleAdd() {
@@ -51,6 +35,7 @@ function handleAdd() {
     />
     <span class="detected" v-if="detectedType === 'live'">Live erkannt</span>
     <span class="detected vod" v-else-if="detectedType === 'vod'">VOD erkannt</span>
+    <span class="detected invalid" v-else-if="input.trim()">Ungueltige Eingabe</span>
     <div class="control-row" :class="{ disabled: !parsed }" @click="parsed && handleAdd()">
       <span>Hinzufuegen</span>
       <span class="symbol">+</span>
@@ -97,6 +82,10 @@ function handleAdd() {
 
 .detected.vod {
   color: #3b82f6;
+}
+
+.detected.invalid {
+  color: var(--danger);
 }
 
 .control-row {

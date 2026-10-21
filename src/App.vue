@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, onMounted, nextTick } from 'vue'
+import { ref, onMounted } from 'vue'
 import type { StreamEntry, PlayerMode } from './types'
 import { useTwitchEmbed } from './composables/useTwitchEmbed'
 import { useSync } from './composables/useSync'
+import { parseStreamInput } from './utils/parseStreamInput'
 import TwitchPlayerCard from './components/TwitchPlayerCard.vue'
 import AddStreamForm from './components/AddStreamForm.vue'
 import SyncControls from './components/SyncControls.vue'
@@ -14,14 +15,20 @@ const {
   playAll, pauseAll,
   activeAudioId, setInitialVolume, setActiveAudio,
 } = useTwitchEmbed()
-const { syncOnce, recordAllOffsets, setMaster } =
-  useSync(entries.value, getPlayer)
+const { syncOnce, recordAllOffsets, ensureMaster } =
+  useSync(() => entries.value, getPlayer)
 
 const twitchReady = ref(false)
+const loadError = ref(false)
 const panelOpen = ref(true)
 
 onMounted(async () => {
-  await loadTwitchIframe()
+  try {
+    await loadTwitchIframe()
+  } catch {
+    loadError.value = true
+    return
+  }
   twitchReady.value = true
   loadFromUrl()
 })
@@ -34,8 +41,13 @@ function loadFromUrl() {
   for (const segment of segments) {
     if (/^\d+$/.test(segment)) {
       addStream('', 'vod', segment)
+    } else if (segment.toLowerCase() === 'videos') {
+      continue
     } else {
-      addStream(segment, 'live', '')
+      const parsed = parseStreamInput(segment)
+      if (parsed?.mode === 'live') {
+        addStream(parsed.channel, 'live', '')
+      }
     }
   }
 }
@@ -46,29 +58,25 @@ function generateId(): string {
   return `stream-${nextId++}`
 }
 
-async function addStream(channel: string, mode: PlayerMode, vodId: string) {
+function addStream(channel: string, mode: PlayerMode, vodId: string) {
   const entry: StreamEntry = {
     id: generateId(),
     channel,
     mode,
     vodId: mode === 'vod' ? vodId : undefined,
     offset: 0,
-    isMaster: entries.value.length === 0 && mode === 'vod',
+    isMaster: false,
     label: channel || `Video ${vodId}`,
   }
 
   entries.value.push(entry)
-
-  await nextTick()
-
-  if (entries.value.length === 1 && mode === 'vod') {
-    setMaster(entry.id)
-  }
+  ensureMaster()
 }
 
 function removeStream(id: string) {
   destroyPlayer(id)
   entries.value = entries.value.filter((e) => e.id !== id)
+  ensureMaster()
 }
 
 function handlePlayerReady(id: string) {
@@ -147,11 +155,16 @@ function getColumnCount(): string {
         <TwitchPlayerCard
           :entry="entry"
           :create-player="createPlayer"
-          :get-player="getPlayer"
           :destroy-player="destroyPlayer"
           @player-ready="handlePlayerReady"
         />
       </div>
+    </section>
+
+    <section class="empty-state" v-else-if="loadError">
+      <div class="empty-icon">&#9888;</div>
+      <h2>Twitch-Player nicht verfuegbar</h2>
+      <p>Das Twitch-Skript konnte nicht geladen werden. Bitte Netzwerk oder Werbeblocker pruefen und die Seite neu laden.</p>
     </section>
 
     <section class="empty-state" v-else-if="twitchReady">
