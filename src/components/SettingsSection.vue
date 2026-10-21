@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 
 const showLatency = defineModel<boolean>('showLatency', { required: true })
+const keepChatsLoaded = defineModel<boolean>('keepChatsLoaded', { required: true })
 
 const open = ref(false)
 </script>
@@ -16,6 +17,10 @@ const open = ref(false)
       <label class="setting-row">
         <span>Debug: Latenz anzeigen</span>
         <input v-model="showLatency" type="checkbox" />
+      </label>
+      <label class="setting-row">
+        <span>Chats im Hintergrund laden</span>
+        <input v-model="keepChatsLoaded" type="checkbox" />
       </label>
     </div>
   </div>

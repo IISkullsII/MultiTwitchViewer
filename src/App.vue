@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import type { StreamEntry, PlayerMode } from './types'
 import { useTwitchEmbed } from './composables/useTwitchEmbed'
 import { useSync } from './composables/useSync'
@@ -9,6 +9,7 @@ import AddStreamForm from './components/AddStreamForm.vue'
 import SyncControls from './components/SyncControls.vue'
 import PlayerControls from './components/PlayerControls.vue'
 import SettingsSection from './components/SettingsSection.vue'
+import ChatPanel from './components/ChatPanel.vue'
 
 const entries = ref<StreamEntry[]>([])
 const {
@@ -24,6 +25,11 @@ const loadError = ref(false)
 const panelOpen = ref(true)
 const viewMode = ref<'tiled' | 'focused'>('tiled')
 const showLatency = ref(true)
+const keepChatsLoaded = ref(true)
+const chatOpen = ref(true)
+const chatWidth = ref(340)
+const chatChannel = ref<string | null>(null)
+let chatResizing = false
 const focusedId = ref<string | null>(null)
 
 onMounted(async () => {
@@ -180,6 +186,41 @@ onBeforeUnmount(() => {
   clearInterval(latencyTimer)
 })
 
+const chatChannels = computed(() => [
+  ...new Set(entries.value.filter((e) => e.mode === 'live').map((e) => e.channel)),
+])
+
+const activeChatChannel = computed(() =>
+  chatChannels.value.includes(chatChannel.value ?? '')
+    ? chatChannel.value
+    : (chatChannels.value[0] ?? null),
+)
+
+watch([viewMode, focusedId], () => {
+  if (viewMode.value !== 'focused') return
+  const entry = entries.value.find((e) => e.id === focusedId.value)
+  if (entry?.mode === 'live') {
+    chatChannel.value = entry.channel
+  }
+})
+
+function startChatResize(e: PointerEvent) {
+  chatResizing = true
+  const target = e.currentTarget as HTMLElement
+  target.setPointerCapture(e.pointerId)
+}
+
+function onChatResize(e: PointerEvent) {
+  if (!chatResizing) return
+  const maxPx = window.innerWidth * 0.5
+  const next = window.innerWidth - e.clientX - 3
+  chatWidth.value = Math.round(Math.min(Math.max(next, 200), maxPx))
+}
+
+function endChatResize() {
+  chatResizing = false
+}
+
 const thumbCount = computed(() => Math.max(entries.value.length - 1, 0))
 const thumbRows = computed(() => (thumbCount.value > 5 ? 2 : 1))
 const thumbVars = computed(() => ({
@@ -212,7 +253,10 @@ const thumbVars = computed(() => ({
           @remove="removeStream"
           @set-active-audio="setActiveAudio"
         />
-        <SettingsSection v-model:show-latency="showLatency" />
+        <SettingsSection
+          v-model:show-latency="showLatency"
+          v-model:keep-chats-loaded="keepChatsLoaded"
+        />
         <SyncControls
           v-if="entries.some((e) => e.mode === 'vod')"
           @sync="syncOnce"
@@ -336,6 +380,25 @@ const thumbVars = computed(() => ({
       <h2>Keine Streams hinzugefuegt</h2>
       <p>Fuege links einen Twitch-Kanal oder ein VOD hinzu, um zu beginnen.</p>
     </section>
+    <div
+      v-if="chatChannels.length > 0 && chatOpen"
+      class="chat-resize"
+      @pointerdown="startChatResize"
+      @pointermove="onChatResize"
+      @pointerup="endChatResize"
+      @pointercancel="endChatResize"
+    ></div>
+
+    <ChatPanel
+      v-if="chatChannels.length > 0"
+      :channels="chatChannels"
+      :active-channel="activeChatChannel"
+      :width="chatWidth"
+      :collapsed="!chatOpen"
+      :keep-loaded="keepChatsLoaded"
+      @select="chatChannel = $event"
+      @toggle="chatOpen = !chatOpen"
+    />
   </div>
 </template>
 
@@ -480,6 +543,29 @@ const thumbVars = computed(() => ({
 
 .thumb-overlay:hover {
   box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.chat-resize {
+  position: relative;
+  flex-shrink: 0;
+  width: 6px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.chat-resize::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
+  background: var(--border);
+}
+
+.chat-resize:hover::after {
+  background: var(--accent);
 }
 
 .latency-badge {
