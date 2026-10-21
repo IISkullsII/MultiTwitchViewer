@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import type { StreamEntry, PlayerMode } from './types'
 import { useTwitchEmbed } from './composables/useTwitchEmbed'
 import { useSync } from './composables/useSync'
@@ -8,12 +8,13 @@ import TwitchPlayerCard from './components/TwitchPlayerCard.vue'
 import AddStreamForm from './components/AddStreamForm.vue'
 import SyncControls from './components/SyncControls.vue'
 import PlayerControls from './components/PlayerControls.vue'
+import SettingsSection from './components/SettingsSection.vue'
 
 const entries = ref<StreamEntry[]>([])
 const {
   loadTwitchIframe, createPlayer, getPlayer, destroyPlayer,
   playAll, pauseAll,
-  activeAudioId, setInitialVolume, setActiveAudio,
+  activeAudioId, setInitialVolume, setActiveAudio, getLatency,
 } = useTwitchEmbed()
 const { syncOnce, recordAllOffsets, ensureMaster } =
   useSync(() => entries.value, getPlayer)
@@ -22,6 +23,7 @@ const twitchReady = ref(false)
 const loadError = ref(false)
 const panelOpen = ref(true)
 const viewMode = ref<'tiled' | 'focused'>('tiled')
+const showLatency = ref(true)
 const focusedId = ref<string | null>(null)
 
 onMounted(async () => {
@@ -156,6 +158,28 @@ function endResize() {
   resizing = false
 }
 
+const latencyLabels = ref<Record<string, string>>({})
+
+function updateLatencies() {
+  const labels: Record<string, string> = {}
+  for (const entry of entries.value) {
+    if (entry.mode !== 'live') continue
+    const seconds = getLatency(entry.id)
+    labels[entry.id] = seconds === null ? '–' : `Latenz ${seconds.toFixed(1)} s`
+  }
+  latencyLabels.value = labels
+}
+
+let latencyTimer: number | undefined
+
+onMounted(() => {
+  latencyTimer = window.setInterval(updateLatencies, 1000)
+})
+
+onBeforeUnmount(() => {
+  clearInterval(latencyTimer)
+})
+
 const thumbCount = computed(() => Math.max(entries.value.length - 1, 0))
 const thumbRows = computed(() => (thumbCount.value > 5 ? 2 : 1))
 const thumbVars = computed(() => ({
@@ -188,6 +212,7 @@ const thumbVars = computed(() => ({
           @remove="removeStream"
           @set-active-audio="setActiveAudio"
         />
+        <SettingsSection v-model:show-latency="showLatency" />
         <SyncControls
           v-if="entries.some((e) => e.mode === 'vod')"
           @sync="syncOnce"
@@ -250,6 +275,10 @@ const thumbVars = computed(() => ({
           :destroy-player="destroyPlayer"
           @player-ready="handlePlayerReady"
         />
+        <div
+          v-if="showLatency && latencyLabels[entry.id]"
+          class="latency-badge"
+        >{{ latencyLabels[entry.id] }}</div>
         <div
           v-if="viewMode === 'focused' && entry.id !== focusedId"
           class="thumb-overlay"
@@ -451,6 +480,19 @@ const thumbVars = computed(() => ({
 
 .thumb-overlay:hover {
   box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.latency-badge {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  z-index: 2;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.6);
+  color: var(--text-primary);
+  font-size: 12px;
+  pointer-events: none;
 }
 
 .resize-handle {

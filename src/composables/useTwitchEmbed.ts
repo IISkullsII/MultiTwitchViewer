@@ -9,6 +9,10 @@ declare global {
   }
 }
 
+export interface PlaybackStats {
+  hlsLatencyBroadcaster?: number
+}
+
 export interface TwitchPlayer {
   play(): void
   pause(): void
@@ -20,6 +24,7 @@ export interface TwitchPlayer {
   getMuted(): boolean
   setMuted(muted: boolean): void
   getStatus(): string
+  getPlaybackStats(): PlaybackStats
   addEventListener(event: string, callback: () => void): void
   removeEventListener(event: string, callback: () => void): void
   destroy(): void
@@ -117,6 +122,16 @@ export function useTwitchEmbed() {
     return playerInstances.get(id)
   }
 
+  function getLatency(id: string): number | null {
+    const player = playerInstances.get(id)
+    if (!player) return null
+    try {
+      return player.getPlaybackStats().hlsLatencyBroadcaster ?? null
+    } catch {
+      return null
+    }
+  }
+
   function destroyPlayer(id: string) {
     const player = playerInstances.get(id)
     if (!player) return
@@ -168,6 +183,7 @@ export function useTwitchEmbed() {
     loadTwitchIframe,
     createPlayer,
     getPlayer,
+    getLatency,
     destroyPlayer,
     destroyAll,
     playAll,
