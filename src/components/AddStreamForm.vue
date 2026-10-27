@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import type { PlayerMode, StreamSpec } from '../types'
 import { parseStreamInput } from '../utils/parseStreamInput'
 
@@ -29,10 +29,94 @@ function handleAdd() {
   emit('add', { channel: result.channel, mode: result.mode, vodId: result.vodId, delay: 0 })
   input.value = ''
 }
+
+const dragActive = ref(false)
+const dragTarget = ref(false)
+let windowDepth = 0
+let sectionDepth = 0
+
+function hasChannelData(e: DragEvent): boolean {
+  const types = Array.from(e.dataTransfer?.types ?? [])
+  return types.includes('text/uri-list') || types.includes('text/plain')
+}
+
+function onWindowDragEnter(e: DragEvent) {
+  if (!hasChannelData(e)) return
+  windowDepth++
+  dragActive.value = true
+}
+
+function onWindowDragLeave(e: DragEvent) {
+  if (!hasChannelData(e)) return
+  windowDepth = Math.max(0, windowDepth - 1)
+  if (windowDepth === 0) {
+    dragActive.value = false
+    dragTarget.value = false
+  }
+}
+
+function onWindowDrop() {
+  windowDepth = 0
+  sectionDepth = 0
+  dragActive.value = false
+  dragTarget.value = false
+}
+
+function onSectionDragEnter(e: DragEvent) {
+  if (!hasChannelData(e)) return
+  sectionDepth++
+  dragTarget.value = true
+}
+
+function onSectionDragLeave(e: DragEvent) {
+  if (!hasChannelData(e)) return
+  sectionDepth = Math.max(0, sectionDepth - 1)
+  if (sectionDepth === 0) dragTarget.value = false
+}
+
+function onSectionDragOver(e: DragEvent) {
+  if (!hasChannelData(e) || !e.dataTransfer) return
+  e.preventDefault()
+  e.dataTransfer.dropEffect = 'copy'
+}
+
+function onSectionDrop(e: DragEvent) {
+  if (!hasChannelData(e) || !e.dataTransfer) return
+  e.preventDefault()
+  onWindowDrop()
+  const raw = e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain')
+  const line = raw
+    .split('\n')
+    .map((s) => s.trim())
+    .find((s) => s.length > 0 && !s.startsWith('#'))
+  if (!line) return
+  const result = parseStreamInput(line)
+  if (!result) return
+  emit('add', { channel: result.channel, mode: result.mode, vodId: result.vodId, delay: 0 })
+}
+
+onMounted(() => {
+  document.addEventListener('dragenter', onWindowDragEnter)
+  document.addEventListener('dragleave', onWindowDragLeave)
+  document.addEventListener('drop', onWindowDrop)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('dragenter', onWindowDragEnter)
+  document.removeEventListener('dragleave', onWindowDragLeave)
+  document.removeEventListener('drop', onWindowDrop)
+})
 </script>
 
 <template>
-  <div class="add-stream-form">
+  <div
+    class="add-stream-form"
+    :class="{ 'drag-hint': dragActive && !dragTarget, 'drag-target': dragTarget }"
+    @dragenter="onSectionDragEnter"
+    @dragleave="onSectionDragLeave"
+    @dragover="onSectionDragOver"
+    @drop="onSectionDrop"
+  >
     <h3 class="section-title">Hinzufuegen</h3>
     <input
       v-model="input"
@@ -60,6 +144,20 @@ function handleAdd() {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  border-radius: 8px;
+  padding: 4px;
+  margin: -4px;
+  transition: background 0.15s, outline-color 0.15s;
+}
+
+.add-stream-form.drag-hint {
+  outline: 2px dashed rgba(145, 71, 255, 0.6);
+  background: rgba(145, 71, 255, 0.1);
+}
+
+.add-stream-form.drag-target {
+  outline: 2px solid var(--accent);
+  background: rgba(145, 71, 255, 0.25);
 }
 
 .section-title {

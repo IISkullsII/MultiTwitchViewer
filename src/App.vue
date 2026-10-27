@@ -568,6 +568,7 @@ function toSpec(entry: StreamEntry): StreamSpec {
 }
 
 function addEntry(spec: StreamSpec, info?: VideoInfo) {
+  const isFirstEntry = entries.value.length === 0
   entries.value.push({
     id: generateId(),
     channel: spec.channel,
@@ -579,6 +580,9 @@ function addEntry(spec: StreamSpec, info?: VideoInfo) {
     duration: info?.duration,
   })
   const created = entries.value[entries.value.length - 1]
+  if (isFirstEntry && !isPopout) {
+    setActiveAudio(created.id)
+  }
   if (created.mode === 'live' && !isPopout && squadSuggestions.value) {
     const group = groupForLogin(created.channel)
     if (group) {
@@ -687,48 +691,6 @@ async function addStreams(specs: StreamSpec[], allowRedirect: boolean) {
 
 function handleAdd(spec: StreamSpec) {
   void addStreams([spec], true)
-}
-
-const dropCount = ref(0)
-const dropActive = computed(() => dropCount.value > 0)
-
-function isChannelDrag(e: DragEvent): boolean {
-  const types = Array.from(e.dataTransfer?.types ?? [])
-  return types.includes('text/uri-list') || types.includes('text/plain')
-}
-
-function onDragEnter(e: DragEvent) {
-  if (!isChannelDrag(e)) return
-  dropCount.value++
-}
-
-function onDragLeave(e: DragEvent) {
-  if (!isChannelDrag(e)) return
-  dropCount.value = Math.max(0, dropCount.value - 1)
-}
-
-function onDragOver(e: DragEvent) {
-  if (!isChannelDrag(e) || !e.dataTransfer) return
-  e.preventDefault()
-  e.dataTransfer.dropEffect = 'copy'
-}
-
-function onDrop(e: DragEvent) {
-  if (!isChannelDrag(e) || !e.dataTransfer) return
-  e.preventDefault()
-  dropCount.value = 0
-  const raw = e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain')
-  const line = raw
-    .split('\n')
-    .map((s) => s.trim())
-    .find((s) => s.length > 0 && !s.startsWith('#'))
-  if (!line) return
-  const parsed = parseStreamInput(line)
-  if (!parsed || parsed.mode !== 'live') {
-    addError.value = 'Kein gueltiger Twitch-Kanal'
-    return
-  }
-  void addStreams([{ channel: parsed.channel, mode: 'live', vodId: '', delay: 0 }], true)
 }
 
 function removeStream(id: string) {
@@ -1034,13 +996,7 @@ const thumbPlacement = computed(() => {
       </div>
     </aside>
 
-    <div
-      class="main"
-      @dragenter="onDragEnter"
-      @dragleave="onDragLeave"
-      @dragover="onDragOver"
-      @drop="onDrop"
-    >
+    <div class="main">
       <section
         class="grid"
         ref="gridEl"
@@ -1138,10 +1094,6 @@ const thumbPlacement = computed(() => {
         <p>Fuege links einen Twitch-Kanal oder ein VOD hinzu, um zu beginnen.</p>
       </section>
 
-      <div v-if="dropActive" class="drop-overlay">
-        <span>Kanal hier ablegen</span>
-      </div>
-
       <Timeline
         v-if="range && !isPopout"
         :start="range.start"
@@ -1189,20 +1141,6 @@ const thumbPlacement = computed(() => {
   flex-direction: column;
   min-width: 0;
   position: relative;
-}
-
-.drop-overlay {
-  position: absolute;
-  inset: 0;
-  z-index: 20;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.5);
-  border: 2px dashed var(--accent);
-  color: var(--text-primary);
-  font-size: 18px;
-  font-weight: 600;
 }
 
 .sidebar {
