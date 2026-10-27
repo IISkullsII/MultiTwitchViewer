@@ -30,16 +30,21 @@ export interface TwitchPlayer {
   destroy(): void
 }
 
-export function useTwitchEmbed() {
+export interface PlaybackHandlers {
+  onPlaying: (id: string) => void
+  onPaused: (id: string) => void
+}
+
+export function useTwitchEmbed(handlers?: PlaybackHandlers) {
   const playerInstances = new Map<string, TwitchPlayer>()
   const iframeReady = ref(false)
   const activeAudioId = ref<string | null>(null)
   const activeVolume = ref(0.74)
 
-  function setInitialVolume(id: string, isMaster: boolean) {
+  function setInitialVolume(id: string, isFirst: boolean) {
     const player = playerInstances.get(id)
     if (!player) return
-    if (activeAudioId.value === id || (activeAudioId.value === null && isMaster)) {
+    if (activeAudioId.value === id || (activeAudioId.value === null && isFirst)) {
       player.setVolume(activeVolume.value)
       activeAudioId.value = id
     } else {
@@ -115,6 +120,8 @@ export function useTwitchEmbed() {
 
     const player = new window.Twitch.Player(containerId, options)
     playerInstances.set(entry.id, player)
+    player.addEventListener('playing', () => handlers?.onPlaying(entry.id))
+    player.addEventListener('pause', () => handlers?.onPaused(entry.id))
     return player
   }
 

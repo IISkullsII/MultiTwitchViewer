@@ -37,7 +37,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="player-wrapper" :class="{ 'is-master': entry.isMaster }">
+  <div class="player-wrapper">
     <div :id="containerId" class="player-container" height="300" width="400"></div>
     <div v-if="hasError" class="player-error">Player konnte nicht geladen werden</div>
   </div>
@@ -49,10 +49,6 @@ onBeforeUnmount(() => {
   width: 100%;
   height: 100%;
   background: black;
-}
-
-.player-wrapper.is-master {
-  box-shadow: inset 0 0 0 2px var(--accent);
 }
 
 .player-container {

@@ -1,16 +1,21 @@
 export type PlayerMode = 'live' | 'vod'
 
+export interface StreamSpec {
+  channel: string
+  mode: PlayerMode
+  vodId: string
+  delay: number
+}
+
 export interface StreamEntry {
   id: string
   channel: string
   mode: PlayerMode
   vodId?: string
-  offset: number
-  isMaster: boolean
   label: string
+  delay: number
+  vodStart?: number
+  duration?: number
 }
 
-export interface SyncState {
-  masterId: string | null
-  lastMasterTime: number
-}
+export type VodEntry = StreamEntry & { vodStart: number; duration: number }

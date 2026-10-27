@@ -1,24 +1,32 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import type { PlayerMode } from '../types'
+import type { PlayerMode, StreamSpec } from '../types'
 import { parseStreamInput } from '../utils/parseStreamInput'
 
+const props = defineProps<{
+  mode: PlayerMode | null
+  error: string | null
+}>()
+
 const emit = defineEmits<{
-  add: [channel: string, mode: PlayerMode, vodId: string]
+  add: [spec: StreamSpec]
 }>()
 
 const input = ref('')
 
 const parsed = computed(() => parseStreamInput(input.value))
-const detectedType = computed(() => parsed.value?.mode ?? null)
+const blocked = computed(
+  () => !!parsed.value && props.mode !== null && parsed.value.mode !== props.mode,
+)
+const canAdd = computed(() => !!parsed.value && !blocked.value)
 
 function handleAdd() {
   const result = parsed.value
-  if (!result) return
+  if (!result || blocked.value) return
   if (result.mode === 'vod' && !result.vodId) return
   if (result.mode === 'live' && !result.channel) return
 
-  emit('add', result.channel, result.mode, result.vodId)
+  emit('add', { channel: result.channel, mode: result.mode, vodId: result.vodId, delay: 0 })
   input.value = ''
 }
 </script>
@@ -33,10 +41,14 @@ function handleAdd() {
       class="input"
       @keyup.enter="handleAdd"
     />
-    <span class="detected" v-if="detectedType === 'live'">Live erkannt</span>
-    <span class="detected vod" v-else-if="detectedType === 'vod'">VOD erkannt</span>
+    <span class="detected invalid" v-if="blocked">
+      {{ mode === 'vod' ? 'Im VOD-Modus nur VODs erlaubt' : 'Im Live-Modus nur Kanaele erlaubt' }}
+    </span>
+    <span class="detected" v-else-if="parsed?.mode === 'live'">Live erkannt</span>
+    <span class="detected vod" v-else-if="parsed?.mode === 'vod'">VOD erkannt</span>
     <span class="detected invalid" v-else-if="input.trim()">Ungueltige Eingabe</span>
-    <div class="control-row" :class="{ disabled: !parsed }" @click="parsed && handleAdd()">
+    <span class="detected invalid" v-if="error">{{ error }}</span>
+    <div class="control-row" :class="{ disabled: !canAdd }" @click="canAdd && handleAdd()">
       <span>Hinzufuegen</span>
       <span class="symbol">+</span>
     </div>

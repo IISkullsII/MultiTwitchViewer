@@ -1,24 +1,39 @@
 <script setup lang="ts">
 import { ref, computed, watch, watchEffect, onMounted, onBeforeUnmount } from 'vue'
-import type { StreamEntry, PlayerMode } from './types'
+import type { StreamEntry, StreamSpec, PlayerMode } from './types'
 import { useTwitchEmbed } from './composables/useTwitchEmbed'
-import { useSync } from './composables/useSync'
+import { usePlayback } from './composables/usePlayback'
 import { parseStreamInput } from './utils/parseStreamInput'
+import {
+  AuthRequiredError,
+  captureTokenFromHash,
+  fetchVideoInfo,
+  redirectToLogin,
+  savePendingStreams,
+  takePendingStreams,
+  type VideoInfo,
+} from './services/twitchApi'
 import TwitchPlayerCard from './components/TwitchPlayerCard.vue'
 import AddStreamForm from './components/AddStreamForm.vue'
-import SyncControls from './components/SyncControls.vue'
 import PlayerControls from './components/PlayerControls.vue'
 import SettingsSection from './components/SettingsSection.vue'
 import ChatPanel from './components/ChatPanel.vue'
+import Timeline from './components/Timeline.vue'
+import { VOD_COLORS } from './utils/colors'
 
 const entries = ref<StreamEntry[]>([])
+const addError = ref<string | null>(null)
 const {
   loadTwitchIframe, createPlayer, getPlayer, destroyPlayer,
   playAll, pauseAll,
   activeAudioId, setInitialVolume, setActiveAudio, getLatency,
-} = useTwitchEmbed()
-const { syncOnce, recordAllOffsets, ensureMaster } =
-  useSync(() => entries.value, getPlayer)
+} = useTwitchEmbed({
+  onPlaying: (id) => playback.onPlayerPlaying(id),
+  onPaused: (id) => playback.onPlayerPaused(id),
+})
+
+const playback = usePlayback(() => entries.value, getPlayer)
+const { position, range, bars, pause, seek, skip, sync, resync, forget } = playback
 
 const twitchReady = ref(false)
 const loadError = ref(false)
@@ -38,7 +53,26 @@ const chatChannel = ref<string | null>(null)
 let chatResizing = false
 const focusedId = ref<string | null>(null)
 
+const currentMode = computed<PlayerMode | null>(() => entries.value[0]?.mode ?? null)
+
+const vodColors = computed(() => {
+  const map: Record<string, string> = {}
+  entries.value
+    .filter((e) => e.mode === 'vod')
+    .forEach((e, idx) => {
+      map[e.id] = VOD_COLORS[idx % VOD_COLORS.length]
+    })
+  return map
+})
+
+const hoveredId = ref<string | null>(null)
+
+const timelineBars = computed(() =>
+  bars.value.map((bar) => ({ ...bar, color: vodColors.value[bar.id] })),
+)
+
 onMounted(async () => {
+  captureTokenFromHash()
   try {
     await loadTwitchIframe()
   } catch {
@@ -46,30 +80,39 @@ onMounted(async () => {
     return
   }
   twitchReady.value = true
-  loadFromUrl()
+
+  const pending = takePendingStreams()
+  if (pending.length > 0) {
+    await addStreams(pending, false)
+  } else {
+    await loadFromUrl()
+  }
+
+  if (entries.value.length > 0) {
+    setActiveAudio(entries.value[0].id)
+  }
 })
 
-function loadFromUrl() {
+async function loadFromUrl() {
+  const specs: StreamSpec[] = []
   const segments = window.location.pathname
     .split('/')
     .filter((s) => s.length > 0)
 
   for (const segment of segments) {
     if (/^\d+$/.test(segment)) {
-      addStream('', 'vod', segment)
+      specs.push({ channel: '', mode: 'vod', vodId: segment, delay: 0 })
     } else if (segment.toLowerCase() === 'videos') {
       continue
     } else {
       const parsed = parseStreamInput(segment)
       if (parsed?.mode === 'live') {
-        addStream(parsed.channel, 'live', '')
+        specs.push({ channel: parsed.channel, mode: 'live', vodId: '', delay: 0 })
       }
     }
   }
 
-  if (entries.value.length > 0) {
-    setActiveAudio(entries.value[0].id)
-  }
+  await addStreams(specs, true)
 }
 
 let nextId = 1
@@ -78,25 +121,78 @@ function generateId(): string {
   return `stream-${nextId++}`
 }
 
-function addStream(channel: string, mode: PlayerMode, vodId: string) {
-  const entry: StreamEntry = {
-    id: generateId(),
-    channel,
-    mode,
-    vodId: mode === 'vod' ? vodId : undefined,
-    offset: 0,
-    isMaster: false,
-    label: channel || `Video ${vodId}`,
-  }
+function modeAllowed(mode: PlayerMode): boolean {
+  return currentMode.value === null || currentMode.value === mode
+}
 
-  entries.value.push(entry)
-  ensureMaster()
+function toSpec(entry: StreamEntry): StreamSpec {
+  return {
+    channel: entry.channel,
+    mode: entry.mode,
+    vodId: entry.vodId ?? '',
+    delay: entry.delay,
+  }
+}
+
+function addEntry(spec: StreamSpec, info?: VideoInfo) {
+  entries.value.push({
+    id: generateId(),
+    channel: spec.channel,
+    mode: spec.mode,
+    vodId: spec.mode === 'vod' ? spec.vodId : undefined,
+    label: spec.channel || info?.channel || `Video ${spec.vodId}`,
+    delay: spec.delay,
+    vodStart: info?.startDate.getTime(),
+    duration: info?.duration,
+  })
+}
+
+async function addStreams(specs: StreamSpec[], allowRedirect: boolean) {
+  addError.value = null
+
+  for (let index = 0; index < specs.length; index++) {
+    const spec = specs[index]
+    if (!modeAllowed(spec.mode)) {
+      addError.value = 'Eingabe passt nicht zum aktuellen Modus (Live oder VOD)'
+      continue
+    }
+
+    if (spec.mode === 'live') {
+      addEntry(spec)
+      continue
+    }
+
+    let info: VideoInfo
+    try {
+      info = await fetchVideoInfo(spec.vodId)
+    } catch (err) {
+      if (err instanceof AuthRequiredError && allowRedirect) {
+        savePendingStreams([...entries.value.map(toSpec), ...specs.slice(index)])
+        redirectToLogin()
+        return
+      }
+      addError.value = err instanceof AuthRequiredError
+        ? 'Twitch-Anmeldung fehlgeschlagen'
+        : 'VOD konnte nicht geladen werden'
+      continue
+    }
+
+    if (!modeAllowed(spec.mode)) {
+      addError.value = 'Eingabe passt nicht zum aktuellen Modus (Live oder VOD)'
+      continue
+    }
+    addEntry(spec, info)
+  }
+}
+
+function handleAdd(spec: StreamSpec) {
+  void addStreams([spec], true)
 }
 
 function removeStream(id: string) {
+  forget(id)
   destroyPlayer(id)
   entries.value = entries.value.filter((e) => e.id !== id)
-  ensureMaster()
 
   if (entries.value.length === 0) {
     viewMode.value = 'tiled'
@@ -104,6 +200,13 @@ function removeStream(id: string) {
   } else if (focusedId.value === id) {
     focusedId.value = defaultFocusId()
   }
+}
+
+function setDelay(id: string, seconds: number) {
+  const entry = entries.value.find((e) => e.id === id)
+  if (!entry) return
+  entry.delay = seconds
+  resync(id)
 }
 
 function defaultFocusId(): string | null {
@@ -131,9 +234,16 @@ function toggleViewMode() {
 }
 
 function handlePlayerReady(id: string) {
-  const entry = entries.value.find((e) => e.id === id)
-  if (entry) {
-    setInitialVolume(id, entry.isMaster)
+  const isFirst = entries.value[0]?.id === id
+  setInitialVolume(id, isFirst)
+  resync(id)
+}
+
+function pauseEverything() {
+  if (currentMode.value === 'vod') {
+    pause()
+  } else {
+    pauseAll()
   }
 }
 
@@ -246,7 +356,12 @@ const thumbVars = computed(() => ({
         {{ panelOpen ? '\u25C0' : '\u25B6' }}
       </button>
       <div class="panel-content" v-show="panelOpen">
-        <AddStreamForm v-if="twitchReady" @add="addStream" />
+        <AddStreamForm
+          v-if="twitchReady"
+          :mode="currentMode"
+          :error="addError"
+          @add="handleAdd"
+        />
         <button
           class="view-toggle"
           :disabled="entries.length === 0"
@@ -258,20 +373,20 @@ const thumbVars = computed(() => ({
           :entries="entries"
           :active-audio-id="activeAudioId"
           :show-playback="showPlayback"
+          :mode="currentMode"
+          :colors="vodColors"
+          @hover="hoveredId = $event"
           @play-all="playAll"
-          @pause-all="pauseAll"
+          @pause-all="pauseEverything"
+          @sync="sync"
           @remove="removeStream"
           @set-active-audio="setActiveAudio"
+          @set-delay="setDelay"
         />
         <SettingsSection
           v-model:light-theme="lightTheme"
           v-model:show-latency="showLatency"
           v-model:keep-chats-loaded="keepChatsLoaded"
-        />
-        <SyncControls
-          v-if="entries.some((e) => e.mode === 'vod')"
-          @sync="syncOnce"
-          @record-offsets="recordAllOffsets"
         />
       </div>
       <div class="panel-compact" v-show="!panelOpen">
@@ -284,8 +399,25 @@ const thumbVars = computed(() => ({
           style="margin-bottom: 6px;"
         >&#9633;</button>
         <template v-if="showPlayback">
-          <button class="icon-btn" title="Alle starten" @click="playAll" style="margin-bottom: 6px;">&#9654;</button>
-          <button class="icon-btn" title="Alle pausieren" @click="pauseAll">&#10074;&#10074;</button>
+          <button
+            v-if="currentMode !== 'vod'"
+            class="icon-btn"
+            title="Alle starten"
+            @click="playAll"
+            style="margin-bottom: 6px;"
+          >&#9654;</button>
+          <button
+            class="icon-btn"
+            title="Alle pausieren"
+            @click="pauseEverything"
+            :style="currentMode === 'vod' ? 'margin-bottom: 6px;' : ''"
+          >&#10074;&#10074;</button>
+          <button
+            v-if="currentMode === 'vod'"
+            class="icon-btn"
+            title="Synchronisieren"
+            @click="sync"
+          >&#8635;</button>
         </template>
         <div class="spacer" style="height: 32px"></div>
         <template v-for="entry in entries" :key="entry.id">
@@ -295,102 +427,119 @@ const thumbVars = computed(() => ({
             :title="entry.label"
             @click="setActiveAudio(entry.id)"
             style="height: 38px;"
+            :style="vodColors[entry.id] ? { boxShadow: `inset 3px 0 0 ${vodColors[entry.id]}` } : undefined"
+            @mouseenter="hoveredId = entry.id"
+            @mouseleave="hoveredId = null"
           >
             <span v-if="activeAudioId === entry.id" class="emoji-icon">&#128266;</span>
             <span v-else class="emoji-icon">&#128263;</span>
           </button>
         </template>
-        <template v-if="entries.some((e) => e.mode === 'vod')">
-          <div class="spacer" style="height: 41px"></div>
-          <button class="icon-btn" title="Verschiebung speichern" @click="recordAllOffsets" style="margin-bottom: 6px;">&#9670;</button>
-          <button class="icon-btn" title="Synchronisieren" @click="syncOnce">&#8634;</button>
-        </template>
       </div>
     </aside>
 
-    <section
-      class="grid"
-      ref="gridEl"
-      :class="{
-        'focus-mode': viewMode === 'focused',
-        'has-thumbs': viewMode === 'focused' && entries.length > 1,
-      }"
-      :style="{ '--cols': getColumnCount(), ...thumbVars, '--strip-px': stripPxStyle }"
-      v-if="entries.length > 0"
-    >
-      <div
-        v-for="entry in entries"
-        :key="entry.id"
-        class="grid-item"
-        :class="{ 'is-focused': viewMode === 'focused' && entry.id === focusedId }"
+    <div class="main">
+      <section
+        class="grid"
+        ref="gridEl"
+        :class="{
+          'focus-mode': viewMode === 'focused',
+          'has-thumbs': viewMode === 'focused' && entries.length > 1,
+        }"
+        :style="{ '--cols': getColumnCount(), ...thumbVars, '--strip-px': stripPxStyle }"
+        v-if="entries.length > 0"
       >
-        <TwitchPlayerCard
-          :entry="entry"
-          :create-player="createPlayer"
-          :destroy-player="destroyPlayer"
-          @player-ready="handlePlayerReady"
-        />
         <div
-          v-if="showLatency && latencyLabels[entry.id]"
-          class="latency-badge"
-        >{{ latencyLabels[entry.id] }}</div>
-        <div
-          v-if="viewMode === 'focused' && entry.id !== focusedId"
-          class="thumb-overlay"
-          @click="focusStream(entry.id)"
+          v-for="entry in entries"
+          :key="entry.id"
+          class="grid-item"
+          :class="{ 'is-focused': viewMode === 'focused' && entry.id === focusedId }"
         >
-          <div class="thumb-actions">
-            <button
-              class="thumb-action"
-              title="Nur fokussieren"
-              aria-label="Nur fokussieren"
-              @click.stop="focusStream(entry.id)"
-            >
-              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-                <circle cx="12" cy="12" r="8" />
-                <circle cx="12" cy="12" r="2" />
-                <line x1="12" y1="1" x2="12" y2="4" />
-                <line x1="12" y1="20" x2="12" y2="23" />
-                <line x1="1" y1="12" x2="4" y2="12" />
-                <line x1="20" y1="12" x2="23" y2="12" />
-              </svg>
-            </button>
-            <button
-              class="thumb-action"
-              title="Fokussieren + Ton"
-              aria-label="Fokussieren + Ton"
-              @click.stop="focusAndPlayAudio(entry.id)"
-            >
-              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M11 5 6 9H2v6h4l5 4V5z" />
-                <path d="M15.5 8.5a5 5 0 0 1 0 7" />
-                <path d="M19 5a10 10 0 0 1 0 14" />
-              </svg>
-            </button>
+          <TwitchPlayerCard
+            :entry="entry"
+            :create-player="createPlayer"
+            :destroy-player="destroyPlayer"
+            @player-ready="handlePlayerReady"
+          />
+          <div
+            v-if="showLatency && latencyLabels[entry.id]"
+            class="latency-badge"
+          >{{ latencyLabels[entry.id] }}</div>
+          <div
+            v-if="hoveredId === entry.id && vodColors[entry.id]"
+            class="hover-frame"
+            :style="{
+              boxShadow: `inset 0 0 0 2px ${vodColors[entry.id]}, 0 0 16px ${vodColors[entry.id]}66`,
+            }"
+          ></div>
+          <div
+            v-if="viewMode === 'focused' && entry.id !== focusedId"
+            class="thumb-overlay"
+          >
+            <div class="thumb-actions">
+              <button
+                class="thumb-action"
+                title="Nur fokussieren"
+                aria-label="Nur fokussieren"
+                @click.stop="focusStream(entry.id)"
+              >
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                  <circle cx="12" cy="12" r="8" />
+                  <circle cx="12" cy="12" r="2" />
+                  <line x1="12" y1="1" x2="12" y2="4" />
+                  <line x1="12" y1="20" x2="12" y2="23" />
+                  <line x1="1" y1="12" x2="4" y2="12" />
+                  <line x1="20" y1="12" x2="23" y2="12" />
+                </svg>
+              </button>
+              <button
+                class="thumb-action"
+                title="Fokussieren + Ton"
+                aria-label="Fokussieren + Ton"
+                @click.stop="focusAndPlayAudio(entry.id)"
+              >
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M11 5 6 9H2v6h4l5 4V5z" />
+                  <path d="M15.5 8.5a5 5 0 0 1 0 7" />
+                  <path d="M19 5a10 10 0 0 1 0 14" />
+                </svg>
+              </button>
+            </div>
           </div>
         </div>
-      </div>
-      <div
-        v-if="viewMode === 'focused' && entries.length > 1"
-        class="resize-handle"
-        @pointerdown="startResize"
-        @pointermove="onResize"
-        @pointerup="endResize"
-        @pointercancel="endResize"
-      ></div>
-    </section>
+        <div
+          v-if="viewMode === 'focused' && entries.length > 1"
+          class="resize-handle"
+          @pointerdown="startResize"
+          @pointermove="onResize"
+          @pointerup="endResize"
+          @pointercancel="endResize"
+        ></div>
+      </section>
 
-    <section class="empty-state" v-else-if="loadError">
-      <div class="empty-icon">&#9888;</div>
-      <h2>Twitch-Player nicht verfuegbar</h2>
-      <p>Das Twitch-Skript konnte nicht geladen werden. Bitte Netzwerk oder Werbeblocker pruefen und die Seite neu laden.</p>
-    </section>
+      <section class="empty-state" v-else-if="loadError">
+        <div class="empty-icon">&#9888;</div>
+        <h2>Twitch-Player nicht verfuegbar</h2>
+        <p>Das Twitch-Skript konnte nicht geladen werden. Bitte Netzwerk oder Werbeblocker pruefen und die Seite neu laden.</p>
+      </section>
 
-    <section class="empty-state" v-else-if="twitchReady">
-      <div class="empty-icon">📺</div>
-      <h2>Keine Streams hinzugefuegt</h2>
-      <p>Fuege links einen Twitch-Kanal oder ein VOD hinzu, um zu beginnen.</p>
-    </section>
+      <section class="empty-state" v-else-if="twitchReady">
+        <div class="empty-icon">📺</div>
+        <h2>Keine Streams hinzugefuegt</h2>
+        <p>Fuege links einen Twitch-Kanal oder ein VOD hinzu, um zu beginnen.</p>
+      </section>
+
+      <Timeline
+        v-if="range"
+        :start="range.start"
+        :end="range.end"
+        :position="position"
+        :bars="timelineBars"
+        @seek="seek"
+        @skip="skip"
+      />
+    </div>
+
     <div
       v-if="chatChannels.length > 0 && chatOpen"
       class="chat-resize"
@@ -419,6 +568,13 @@ const thumbVars = computed(() => ({
   display: flex;
   height: 100vh;
   overflow: hidden;
+}
+
+.main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
 }
 
 .sidebar {
@@ -513,6 +669,7 @@ const thumbVars = computed(() => ({
   --strip-h: clamp(calc(25vh - var(--gap)), var(--strip-px, 25vh), calc(75vh - var(--gap)));
   position: relative;
   flex: 1;
+  min-height: 0;
   display: grid;
   grid-template-columns: repeat(var(--cols), 1fr);
   overflow: hidden;
@@ -546,15 +703,47 @@ const thumbVars = computed(() => ({
   grid-row: 1;
 }
 
+.hover-frame {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  border-radius: 2px;
+  animation:
+    hover-frame-in 0.2s ease-out,
+    hover-frame-pulse 2.4s ease-in-out 0.2s infinite;
+}
+
+@keyframes hover-frame-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes hover-frame-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hover-frame {
+    animation: none;
+  }
+}
+
 .thumb-overlay {
   position: absolute;
   inset: 0;
   z-index: 1;
-  cursor: pointer;
-}
-
-.thumb-overlay:hover {
-  box-shadow: inset 0 0 0 2px var(--accent);
+  pointer-events: none;
 }
 
 .chat-resize {
@@ -621,17 +810,21 @@ const thumbVars = computed(() => ({
 
 .thumb-actions {
   position: absolute;
-  inset: 0;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
   display: flex;
   align-items: center;
-  justify-content: center;
   gap: 12px;
-  background: rgba(0, 0, 0, 0.55);
+  padding: 10px 18px 12px;
+  border-radius: 0 0 16px 16px;
+  background: rgba(0, 0, 0, 0.8);
   opacity: 0;
   transition: opacity 0.15s;
+  pointer-events: auto;
 }
 
-.thumb-overlay:hover .thumb-actions {
+.grid-item:hover .thumb-actions {
   opacity: 1;
 }
 
