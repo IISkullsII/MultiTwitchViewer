@@ -34,7 +34,7 @@ function onDelayChange(id: string, evt: Event) {
   <div class="player-controls">
     <h3 v-if="entries.length > 0" class="section-title">Wiedergabe</h3>
     <template v-if="showPlayback && entries.length > 0">
-      <div v-if="mode !== 'vod'" class="control-row" @click="emit('playAll')">
+      <div class="control-row" @click="emit('playAll')">
         <span>Alle starten</span>
         <span class="symbol">&#9654;</span>
       </div>

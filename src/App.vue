@@ -469,6 +469,7 @@ function playEverything() {
     sendBridge({ type: 'play-all', from: myWindowId })
     return
   }
+  if (currentMode.value === 'vod') syncPlayback()
   playAll()
   for (const player of remotePlayers.values()) player.play()
 }
@@ -694,6 +695,8 @@ function getColumnCount(): string {
 
 const showPlayback = computed(() => entries.value.length > 0)
 
+const splitHalf = computed(() => viewMode.value === 'focused' && localEntries.value.length >= 6)
+
 const gridEl = ref<HTMLElement | null>(null)
 const stripPx = ref<number | null>(null)
 const stripPxStyle = computed(() => (stripPx.value === null ? undefined : `${stripPx.value}px`))
@@ -707,7 +710,7 @@ function startResize(e: PointerEvent) {
 }
 
 function onResize(e: PointerEvent) {
-  if (!resizing || !gridEl.value) return
+  if (!resizing || !gridEl.value || splitHalf.value) return
   const bottom = gridEl.value.getBoundingClientRect().bottom
   const minPx = window.innerHeight * 0.25 - HANDLE_GAP
   const maxPx = window.innerHeight * 0.75 - HANDLE_GAP
@@ -861,7 +864,6 @@ const thumbPlacement = computed(() => {
         >&#9633;</button>
         <template v-if="showPlayback && entries.length > 0">
           <button
-            v-if="currentMode !== 'vod'"
             class="icon-btn"
             title="Alle starten"
             @click="playEverything"
@@ -906,6 +908,7 @@ const thumbPlacement = computed(() => {
         :class="{
           'focus-mode': viewMode === 'focused',
           'has-thumbs': viewMode === 'focused' && localEntries.length > 1,
+          'split-half': splitHalf,
         }"
         :style="{ '--cols': getColumnCount(), ...thumbVars, '--strip-px': stripPxStyle }"
         v-if="localEntries.length > 0"
@@ -969,7 +972,7 @@ const thumbPlacement = computed(() => {
           </div>
         </div>
         <div
-          v-if="viewMode === 'focused' && localEntries.length > 1"
+          v-if="viewMode === 'focused' && localEntries.length > 1 && !splitHalf"
           class="resize-handle"
           @pointerdown="startResize"
           @pointermove="onResize"
@@ -1160,6 +1163,13 @@ const thumbPlacement = computed(() => {
 
 .grid.focus-mode:not(.has-thumbs) {
   grid-template-rows: minmax(0, 1fr);
+}
+
+.grid.focus-mode.split-half {
+  grid-template-rows: minmax(0, 1fr) 12px repeat(
+    var(--thumb-rows),
+    minmax(0, calc((100% - 12px) / 2 / var(--thumb-rows)))
+  );
 }
 
 .grid.focus-mode .grid-item {
