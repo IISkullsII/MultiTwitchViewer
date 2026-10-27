@@ -624,6 +624,7 @@ const squadSuggestions = ref(false)
 watch(squadSuggestions, (enabled) => {
   if (!enabled) {
     groups.value = []
+    for (const entry of entries.value) delete entry.groupId
     return
   }
   for (const entry of entries.value) {
