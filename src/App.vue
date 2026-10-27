@@ -7,6 +7,7 @@ import { RemotePlayer } from './composables/remotePlayer'
 import { parseStreamInput } from './utils/parseStreamInput'
 import { formatTimeParam, parseTimeParam } from './utils/timeParam'
 import { VOD_COLORS } from './utils/colors'
+import { APP_BASE } from './config'
 import {
   onBridge,
   sendBridge,
@@ -408,7 +409,7 @@ function returnToMain(ids: string[]) {
 
 function openPopout() {
   const id = Math.random().toString(36).slice(2, 10)
-  window.open(`${window.location.origin}/?popout=${id}`, `multitwitch-popout-${id}`, 'width=1280,height=720')
+  window.open(`${window.location.origin}${APP_BASE}?popout=${id}`, `multitwitch-popout-${id}`, 'width=1280,height=720')
 }
 
 function takeSelected(ids: string[]) {
@@ -485,7 +486,12 @@ let urlStartSeconds: number | null = null
 
 async function loadFromUrl() {
   const specs: StreamSpec[] = []
-  const segments = window.location.pathname
+  const basePath = APP_BASE.replace(/\/$/, '')
+  let path = window.location.pathname
+  if (path === basePath || path.startsWith(basePath + '/')) {
+    path = path.slice(basePath.length)
+  }
+  const segments = path
     .split('/')
     .map((s) => decodeURIComponent(s))
     .filter((s) => s.length > 0)
@@ -519,7 +525,7 @@ function buildShareUrl(): string {
   const segments = entries.value.map((e) =>
     e.mode === 'live' ? e.channel : e.delay ? `${e.vodId}:${e.delay}` : (e.vodId ?? ''),
   )
-  const url = `${window.location.origin}/${segments.join('/')}`
+  const url = `${window.location.origin}${APP_BASE}${segments.join('/')}`
   if (!range.value) return url
   return `${url}?t=${formatTimeParam((position.value - range.value.start) / 1000)}`
 }

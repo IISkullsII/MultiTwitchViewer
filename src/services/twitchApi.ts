@@ -1,4 +1,4 @@
-import { TWITCH_CLIENT_ID } from '../config'
+import { APP_BASE, TWITCH_CLIENT_ID } from '../config'
 import type { StreamSpec } from '../types'
 
 const TOKEN_KEY = 'twitch-access-token'
@@ -38,7 +38,7 @@ export function takePendingStreams(): PendingState | null {
 export function redirectToLogin() {
   const params = new URLSearchParams({
     client_id: TWITCH_CLIENT_ID,
-    redirect_uri: window.location.origin + '/',
+    redirect_uri: window.location.origin + APP_BASE,
     response_type: 'token',
     scope: '',
   })
