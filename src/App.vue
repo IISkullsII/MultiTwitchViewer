@@ -275,6 +275,9 @@ function handleMainMessage(msg: BridgeMessage) {
     case 'set-delay':
       setDelay(msg.id, msg.seconds)
       break
+    case 'play-all':
+      playEverything()
+      break
     case 'pause-all':
       pauseEverything()
       break
@@ -462,6 +465,10 @@ function pauseEverything() {
 }
 
 function playEverything() {
+  if (isPopout) {
+    sendBridge({ type: 'play-all', from: myWindowId })
+    return
+  }
   playAll()
   for (const player of remotePlayers.values()) player.play()
 }
@@ -685,9 +692,7 @@ function getColumnCount(): string {
   return '4'
 }
 
-const showPlayback = computed(
-  () => entries.value.length === 0 || entries.value.some((e) => e.mode === 'vod'),
-)
+const showPlayback = computed(() => entries.value.length > 0)
 
 const gridEl = ref<HTMLElement | null>(null)
 const stripPx = ref<number | null>(null)
@@ -769,10 +774,22 @@ function endChatResize() {
 
 const thumbCount = computed(() => Math.max(localEntries.value.length - 1, 0))
 const thumbRows = computed(() => (thumbCount.value > 5 ? 2 : 1))
+const thumbCols = computed(() => Math.max(1, Math.ceil(thumbCount.value / thumbRows.value)))
 const thumbVars = computed(() => ({
-  '--thumb-cols': String(Math.max(1, Math.ceil(thumbCount.value / thumbRows.value))),
+  '--thumb-cols': String(thumbCols.value),
   '--thumb-rows': String(thumbRows.value),
 }))
+
+const thumbPlacement = computed(() => {
+  const placement: Record<string, { row: number; col: number }> = {}
+  if (viewMode.value !== 'focused') return placement
+  localEntries.value
+    .filter((e) => e.id !== focusedId.value)
+    .forEach((e, i) => {
+      placement[e.id] = { row: 3 + Math.floor(i / thumbCols.value), col: (i % thumbCols.value) + 1 }
+    })
+  return placement
+})
 </script>
 
 <template>
@@ -806,6 +823,7 @@ const thumbVars = computed(() => ({
         <PlayerControls
           :entries="displayEntries"
           :readonly-ids="foreignIds"
+          :latency="showLatency ? latencyLabels : {}"
           :active-audio-id="audioId"
           :show-playback="showPlayback"
           :mode="currentMode"
@@ -897,6 +915,10 @@ const thumbVars = computed(() => ({
           :key="entry.id"
           class="grid-item"
           :class="{ 'is-focused': viewMode === 'focused' && entry.id === focusedId }"
+          :style="thumbPlacement[entry.id] ? {
+            gridRow: String(thumbPlacement[entry.id].row),
+            gridColumn: String(thumbPlacement[entry.id].col),
+          } : undefined"
         >
           <TwitchPlayerCard
             :entry="entry"
@@ -904,10 +926,6 @@ const thumbVars = computed(() => ({
             :destroy-player="destroyPlayer"
             @player-ready="handlePlayerReady"
           />
-          <div
-            v-if="showLatency && latencyLabels[entry.id]"
-            class="latency-badge"
-          >{{ latencyLabels[entry.id] }}</div>
           <div
             v-if="hoveredId === entry.id && vodColors[entry.id]"
             class="hover-frame"
@@ -1121,21 +1139,23 @@ const thumbVars = computed(() => ({
   min-height: 0;
   display: grid;
   grid-template-columns: repeat(var(--cols), 1fr);
+  gap: 2px;
   overflow: hidden;
 }
 
 .grid-item {
   position: relative;
   overflow: hidden;
+  padding: 1px;
 }
 
 .grid.focus-mode {
   grid-template-columns: repeat(var(--thumb-cols), minmax(0, 1fr));
-  grid-template-rows: minmax(0, 1fr) repeat(
+  grid-template-rows: minmax(0, 1fr) 12px repeat(
     var(--thumb-rows),
-    minmax(0, calc((var(--strip-h) - (var(--thumb-rows) - 1) * var(--gap)) / var(--thumb-rows)))
+    minmax(0, calc((var(--strip-h) - (var(--thumb-rows) - 1) * 0px) / var(--thumb-rows)))
   );
-  gap: var(--gap);
+  gap: 0px 2px;
 }
 
 .grid.focus-mode:not(.has-thumbs) {
@@ -1192,11 +1212,20 @@ const thumbVars = computed(() => ({
   }
 }
 
+.grid.focus-mode .grid-item:not(.is-focused) {
+  padding-top: 22px;
+}
+
 .thumb-overlay {
   position: absolute;
-  inset: 0;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 22px;
   z-index: 1;
-  pointer-events: none;
+  display: flex;
+  justify-content: center;
+  align-items: center;
 }
 
 .chat-resize {
@@ -1222,26 +1251,11 @@ const thumbVars = computed(() => ({
   background: var(--accent);
 }
 
-.latency-badge {
-  position: absolute;
-  right: 8px;
-  bottom: 8px;
-  z-index: 2;
-  padding: 2px 6px;
-  border-radius: 4px;
-  background: rgba(0, 0, 0, 0.6);
-  color: var(--text-primary);
-  font-size: 12px;
-  pointer-events: none;
-}
-
 .resize-handle {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: calc(100% - var(--strip-h) - var(--gap) / 2 - 6px);
+  position: relative;
+  grid-column: 1 / -1;
+  grid-row: 2;
   height: 12px;
-  z-index: 2;
   cursor: row-resize;
   touch-action: none;
 }
@@ -1262,36 +1276,40 @@ const thumbVars = computed(() => ({
 }
 
 .thumb-actions {
-  position: absolute;
-  top: 0;
-  left: 50%;
-  transform: translateX(-50%);
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 18px 12px;
-  border-radius: 0 0 16px 16px;
-  background: rgba(0, 0, 0, 0.8);
-  opacity: 0;
-  transition: opacity 0.15s;
-  pointer-events: auto;
-}
-
-.grid-item:hover .thumb-actions {
-  opacity: 1;
+  gap: 0;
+  width: 100%;
+  height: 100%;
 }
 
 .thumb-action {
-  width: 40px;
-  height: 40px;
+  flex: 1;
+  height: 18px;
   display: flex;
   align-items: center;
   justify-content: center;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 0;
   background: var(--bg-tertiary);
   color: var(--text-primary);
   cursor: pointer;
+  padding: 0;
+}
+
+.thumb-action:first-child {
+  border-radius: 4px 0 0 0;
+  margin-left: 8px;
+}
+
+.thumb-action:last-child {
+  border-radius: 0 4px 0 0;
+  margin-right: 8px;
+}
+
+.thumb-action svg {
+  width: 12px;
+  height: 12px;
 }
 
 .thumb-action:hover {

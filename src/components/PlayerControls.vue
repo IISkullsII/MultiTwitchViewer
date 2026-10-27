@@ -9,8 +9,9 @@ const props = withDefaults(
     mode: PlayerMode | null
     colors: Record<string, string>
     readonlyIds?: string[]
+    latency?: Record<string, string>
   }>(),
-  { readonlyIds: () => [] },
+  { readonlyIds: () => [], latency: () => ({}) },
 )
 
 const emit = defineEmits<{
@@ -62,6 +63,7 @@ function onDelayChange(id: string, evt: Event) {
             :style="colors[entry.id] ? { borderLeft: `3px solid ${colors[entry.id]}` } : undefined"
           >
             <span class="stream-name">{{ entry.label }}</span>
+            <span v-if="props.latency[entry.id]" class="latency-text">{{ props.latency[entry.id] }}</span>
             <span class="delay-field" v-if="entry.mode === 'vod' && !props.readonlyIds.includes(entry.id)" title="Verzoegerung in Sekunden">
               <input
                 class="delay-input"
@@ -163,6 +165,13 @@ function onDelayChange(id: string, evt: Event) {
   text-overflow: ellipsis;
   white-space: nowrap;
   flex: 1;
+}
+
+.latency-text {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
 }
 
 .delay-field {

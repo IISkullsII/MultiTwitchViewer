@@ -43,7 +43,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="player-wrapper">
-    <div :id="containerId" class="player-container" height="300" width="400"></div>
+    <div :id="containerId" class="player-container"></div>
     <div v-if="hasError" class="player-error">Player konnte nicht geladen werden</div>
   </div>
 </template>

@@ -29,6 +29,7 @@ export type BridgeMessage =
   | { type: 'event'; from: string; id: string; name: TileEventName; currentTime: number }
   | { type: 'set-audio'; from: string; id: string }
   | { type: 'set-delay'; from: string; id: string; seconds: number }
+  | { type: 'play-all'; from: string }
   | { type: 'pause-all'; from: string }
   | { type: 'sync'; from: string }
   | { type: 'hover'; id: string | null }
