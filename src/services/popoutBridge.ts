@@ -16,7 +16,7 @@ export type BridgeMessage =
   | { type: 'main-closed' }
   | { type: 'hello'; from: string }
   | { type: 'alive'; from: string }
-  | { type: 'settings'; lightTheme: boolean; keepChatsLoaded: boolean }
+  | { type: 'settings'; lightTheme: boolean; keepChatsLoaded: boolean; hidePopoutPanels: boolean }
   | { type: 'audio'; id: string | null }
   | { type: 'directory'; items: DirectoryItem[] }
   | { type: 'take'; from: string; ids: string[] }

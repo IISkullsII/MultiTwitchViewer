@@ -67,6 +67,11 @@ const loadError = ref(false)
 const panelOpen = ref(true)
 const viewMode = ref<'tiled' | 'focused'>('tiled')
 const lightTheme = ref(false)
+const hidePopoutPanels = ref(false)
+
+const hidesPanel = computed(
+  () => isPopout && hidePopoutPanels.value && currentMode.value === 'vod' && entries.value.length > 0,
+)
 
 watchEffect(() => {
   document.documentElement.dataset.theme = lightTheme.value ? 'light' : 'dark'
@@ -300,6 +305,7 @@ function handlePopoutMessage(msg: BridgeMessage) {
     case 'settings':
       lightTheme.value = msg.lightTheme
       keepChatsLoaded.value = msg.keepChatsLoaded
+      hidePopoutPanels.value = msg.hidePopoutPanels
       break
     case 'audio':
       audioId.value = msg.id
@@ -342,6 +348,7 @@ function sendSettings() {
     type: 'settings',
     lightTheme: lightTheme.value,
     keepChatsLoaded: keepChatsLoaded.value,
+    hidePopoutPanels: hidePopoutPanels.value,
   })
 }
 
@@ -365,7 +372,7 @@ function setHover(id: string | null) {
 }
 
 watch(entries, sendDirectory, { deep: true })
-watch([lightTheme, keepChatsLoaded], sendSettings)
+watch([lightTheme, keepChatsLoaded, hidePopoutPanels], sendSettings)
 
 function adoptIntoPopout(to: string, ids: string[]) {
   const moved = entries.value.filter((e) => ids.includes(e.id) && !e.windowId)
@@ -797,7 +804,7 @@ const thumbPlacement = computed(() => {
 
 <template>
   <div class="app">
-    <aside class="sidebar" :class="{ collapsed: !panelOpen }">
+    <aside v-if="!hidesPanel" class="sidebar" :class="{ collapsed: !panelOpen }">
       <button class="panel-toggle" @click="panelOpen = !panelOpen">
         {{ panelOpen ? '\u25C0' : '\u25B6' }}
       </button>
@@ -844,6 +851,8 @@ const thumbPlacement = computed(() => {
           v-model:light-theme="lightTheme"
           v-model:show-latency="showLatency"
           v-model:keep-chats-loaded="keepChatsLoaded"
+          v-model:hide-popout-panels="hidePopoutPanels"
+          :vod-mode="currentMode === 'vod'"
         />
         <button
           v-if="!isPopout && entries.length > 0"

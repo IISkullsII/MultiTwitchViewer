@@ -4,6 +4,11 @@ import { ref } from 'vue'
 const lightTheme = defineModel<boolean>('lightTheme', { required: true })
 const showLatency = defineModel<boolean>('showLatency', { required: true })
 const keepChatsLoaded = defineModel<boolean>('keepChatsLoaded', { required: true })
+const hidePopoutPanels = defineModel<boolean>('hidePopoutPanels', { required: true })
+
+defineProps<{
+  vodMode: boolean
+}>()
 
 const open = ref(false)
 </script>
@@ -26,6 +31,10 @@ const open = ref(false)
       <label class="setting-row">
         <span>Debug information</span>
         <input v-model="showLatency" type="checkbox" />
+      </label>
+      <label v-if="vodMode" class="setting-row">
+        <span>Seitenpanel in Popouts ausblenden</span>
+        <input v-model="hidePopoutPanels" type="checkbox" />
       </label>
     </div>
   </div>
