@@ -20,6 +20,7 @@ import SettingsSection from './components/SettingsSection.vue'
 import ChatPanel from './components/ChatPanel.vue'
 import Timeline from './components/Timeline.vue'
 import { VOD_COLORS } from './utils/colors'
+import { formatTimeParam, parseTimeParam } from './utils/timeParam'
 
 const entries = ref<StreamEntry[]>([])
 const addError = ref<string | null>(null)
@@ -82,8 +83,9 @@ onMounted(async () => {
   twitchReady.value = true
 
   const pending = takePendingStreams()
-  if (pending.length > 0) {
-    await addStreams(pending, false)
+  if (pending) {
+    urlStartSeconds = pending.startSeconds
+    await addStreams(pending.streams, false)
   } else {
     await loadFromUrl()
   }
@@ -91,17 +93,20 @@ onMounted(async () => {
   if (entries.value.length > 0) {
     setActiveAudio(entries.value[0].id)
   }
+  applyUrlStart()
 })
 
 async function loadFromUrl() {
   const specs: StreamSpec[] = []
   const segments = window.location.pathname
     .split('/')
+    .map((s) => decodeURIComponent(s))
     .filter((s) => s.length > 0)
 
   for (const segment of segments) {
-    if (/^\d+$/.test(segment)) {
-      specs.push({ channel: '', mode: 'vod', vodId: segment, delay: 0 })
+    const vod = segment.match(/^(\d+)(?::(-?\d+(?:\.\d+)?))?$/)
+    if (vod) {
+      specs.push({ channel: '', mode: 'vod', vodId: vod[1], delay: Number(vod[2] ?? 0) })
     } else if (segment.toLowerCase() === 'videos') {
       continue
     } else {
@@ -112,8 +117,43 @@ async function loadFromUrl() {
     }
   }
 
+  urlStartSeconds = parseTimeParam(new URLSearchParams(window.location.search).get('t'))
   await addStreams(specs, true)
 }
+
+function applyUrlStart() {
+  const r = range.value
+  if (urlStartSeconds === null || !r) return
+  seek(r.start + urlStartSeconds * 1000)
+  urlStartSeconds = null
+}
+
+function buildShareUrl(): string {
+  const segments = entries.value.map((e) =>
+    e.mode === 'live' ? e.channel : e.delay ? `${e.vodId}:${e.delay}` : (e.vodId ?? ''),
+  )
+  const url = `${window.location.origin}/${segments.join('/')}`
+  if (!range.value) return url
+  return `${url}?t=${formatTimeParam((position.value - range.value.start) / 1000)}`
+}
+
+const copied = ref(false)
+let copiedTimer: number | undefined
+
+async function copyShareUrl() {
+  try {
+    await navigator.clipboard.writeText(buildShareUrl())
+    copied.value = true
+    clearTimeout(copiedTimer)
+    copiedTimer = window.setTimeout(() => {
+      copied.value = false
+    }, 2000)
+  } catch {
+    addError.value = 'Link konnte nicht kopiert werden'
+  }
+}
+
+let urlStartSeconds: number | null = null
 
 let nextId = 1
 
@@ -167,7 +207,7 @@ async function addStreams(specs: StreamSpec[], allowRedirect: boolean) {
       info = await fetchVideoInfo(spec.vodId)
     } catch (err) {
       if (err instanceof AuthRequiredError && allowRedirect) {
-        savePendingStreams([...entries.value.map(toSpec), ...specs.slice(index)])
+        savePendingStreams([...entries.value.map(toSpec), ...specs.slice(index)], urlStartSeconds)
         redirectToLogin()
         return
       }
@@ -389,6 +429,13 @@ const thumbVars = computed(() => ({
           v-model:show-latency="showLatency"
           v-model:keep-chats-loaded="keepChatsLoaded"
         />
+        <button
+          v-if="entries.length > 0"
+          class="view-toggle"
+          @click="copyShareUrl"
+        >
+          {{ copied ? 'Link kopiert' : 'Link kopieren' }}
+        </button>
       </div>
       <div class="panel-compact" v-show="!panelOpen">
         <div class="spacer" style="height: 136px"></div>

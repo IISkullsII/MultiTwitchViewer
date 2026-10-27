@@ -19,14 +19,20 @@ export function captureTokenFromHash() {
   window.history.replaceState(null, '', window.location.pathname)
 }
 
-export function savePendingStreams(specs: StreamSpec[]) {
-  sessionStorage.setItem(PENDING_KEY, JSON.stringify(specs))
+export interface PendingState {
+  streams: StreamSpec[]
+  startSeconds: number | null
 }
 
-export function takePendingStreams(): StreamSpec[] {
+export function savePendingStreams(streams: StreamSpec[], startSeconds: number | null) {
+  const state: PendingState = { streams, startSeconds }
+  sessionStorage.setItem(PENDING_KEY, JSON.stringify(state))
+}
+
+export function takePendingStreams(): PendingState | null {
   const raw = sessionStorage.getItem(PENDING_KEY)
   sessionStorage.removeItem(PENDING_KEY)
-  return raw ? (JSON.parse(raw) as StreamSpec[]) : []
+  return raw ? (JSON.parse(raw) as PendingState) : null
 }
 
 export function redirectToLogin() {
