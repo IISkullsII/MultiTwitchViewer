@@ -3,7 +3,17 @@ import { ref, computed, watch, watchEffect, onMounted, onBeforeUnmount } from 'v
 import type { StreamEntry, StreamSpec, PlayerMode } from './types'
 import { useTwitchEmbed } from './composables/useTwitchEmbed'
 import { usePlayback } from './composables/usePlayback'
+import { RemotePlayer } from './composables/remotePlayer'
 import { parseStreamInput } from './utils/parseStreamInput'
+import { formatTimeParam, parseTimeParam } from './utils/timeParam'
+import { VOD_COLORS } from './utils/colors'
+import {
+  onBridge,
+  sendBridge,
+  type BridgeMessage,
+  type DirectoryItem,
+  type Operation,
+} from './services/popoutBridge'
 import {
   AuthRequiredError,
   captureTokenFromHash,
@@ -19,22 +29,38 @@ import PlayerControls from './components/PlayerControls.vue'
 import SettingsSection from './components/SettingsSection.vue'
 import ChatPanel from './components/ChatPanel.vue'
 import Timeline from './components/Timeline.vue'
-import { VOD_COLORS } from './utils/colors'
-import { formatTimeParam, parseTimeParam } from './utils/timeParam'
+import PopoutSelection from './components/PopoutSelection.vue'
+
+const popoutId = new URLSearchParams(window.location.search).get('popout')
+const isPopout = popoutId !== null
+const myWindowId = popoutId ?? 'main'
+const HEARTBEAT_TIMEOUT_MS = 4000
 
 const entries = ref<StreamEntry[]>([])
 const addError = ref<string | null>(null)
+const directory = ref<DirectoryItem[]>([])
+const audioId = ref<string | null>(null)
+const remotePlayers = new Map<string, RemotePlayer>()
+const popoutSeen = new Map<string, number>()
+let lastHeartbeat = Date.now()
+
 const {
   loadTwitchIframe, createPlayer, getPlayer, destroyPlayer,
   playAll, pauseAll,
-  activeAudioId, setInitialVolume, setActiveAudio, getLatency,
+  activeVolume, setInitialVolume, setActiveAudio: setEmbedAudio, getLatency,
 } = useTwitchEmbed({
-  onPlaying: (id) => playback.onPlayerPlaying(id),
-  onPaused: (id) => playback.onPlayerPaused(id),
+  onPlaying: (id) => onTileEvent(id, 'playing'),
+  onPaused: (id) => onTileEvent(id, 'pause'),
 })
 
-const playback = usePlayback(() => entries.value, getPlayer)
-const { position, range, bars, pause, seek, skip, sync, resync, forget } = playback
+const playback = usePlayback(
+  () => entries.value,
+  (id) => remotePlayers.get(id) ?? getPlayer(id),
+)
+const {
+  position, range, bars, pause, seek, skip,
+  sync: syncPlayback, resync, forget,
+} = playback
 
 const twitchReady = ref(false)
 const loadError = ref(false)
@@ -54,10 +80,53 @@ const chatChannel = ref<string | null>(null)
 let chatResizing = false
 const focusedId = ref<string | null>(null)
 
+const localEntries = computed(() =>
+  isPopout ? entries.value : entries.value.filter((e) => !e.windowId),
+)
+
+const sidebarEntries = computed(() =>
+  entries.value.map((e) =>
+    isPopout || !e.windowId ? e : { ...e, label: `${e.label} (Popout)` },
+  ),
+)
+
 const currentMode = computed<PlayerMode | null>(() => entries.value[0]?.mode ?? null)
+
+const selectableItems = computed(() => directory.value.filter((i) => i.owner === null))
+
+const foreignIds = computed(() =>
+  isPopout ? directory.value.filter((i) => i.owner !== myWindowId).map((i) => i.id) : [],
+)
+
+function itemToEntry(item: DirectoryItem): StreamEntry {
+  return {
+    id: item.id,
+    channel: '',
+    mode: item.mode,
+    label: item.label,
+    delay: 0,
+    windowId: item.owner ?? undefined,
+    color: item.color,
+  }
+}
+
+const popoutSidebar = computed<StreamEntry[]>(() => {
+  if (directory.value.length === 0) return entries.value
+  return directory.value.map(
+    (item) => entries.value.find((e) => e.id === item.id) ?? itemToEntry(item),
+  )
+})
+
+const displayEntries = computed(() => (isPopout ? popoutSidebar.value : sidebarEntries.value))
 
 const vodColors = computed(() => {
   const map: Record<string, string> = {}
+  if (isPopout) {
+    for (const e of entries.value) {
+      if (e.color) map[e.id] = e.color
+    }
+    return map
+  }
   entries.value
     .filter((e) => e.mode === 'vod')
     .forEach((e, idx) => {
@@ -72,8 +141,25 @@ const timelineBars = computed(() =>
   bars.value.map((bar) => ({ ...bar, color: vodColors.value[bar.id] })),
 )
 
+let bridgeTimer: number | undefined
+let stateTimer: number | undefined
+let unsubscribeBridge: (() => void) | undefined
+
+function onPageHide() {
+  if (isPopout) {
+    sendBridge({ type: 'return', from: myWindowId, ids: entries.value.map((e) => e.id) })
+  } else {
+    sendBridge({ type: 'main-closed' })
+  }
+}
+
 onMounted(async () => {
-  captureTokenFromHash()
+  unsubscribeBridge = onBridge(handleBridgeMessage)
+  window.addEventListener('pagehide', onPageHide)
+  bridgeTimer = window.setInterval(bridgeTick, 1000)
+  if (isPopout) stateTimer = window.setInterval(reportTileStates, 250)
+
+  if (!isPopout) captureTokenFromHash()
   try {
     await loadTwitchIframe()
   } catch {
@@ -81,6 +167,11 @@ onMounted(async () => {
     return
   }
   twitchReady.value = true
+
+  if (isPopout) {
+    sendBridge({ type: 'hello', from: myWindowId })
+    return
+  }
 
   const pending = takePendingStreams()
   if (pending) {
@@ -95,6 +186,287 @@ onMounted(async () => {
   }
   applyUrlStart()
 })
+
+onBeforeUnmount(() => {
+  clearInterval(latencyTimer)
+  clearInterval(bridgeTimer)
+  clearInterval(stateTimer)
+  unsubscribeBridge?.()
+  window.removeEventListener('pagehide', onPageHide)
+})
+
+function bridgeTick() {
+  if (isPopout) {
+    sendBridge({ type: 'alive', from: myWindowId })
+    if (Date.now() - lastHeartbeat > HEARTBEAT_TIMEOUT_MS) window.close()
+    return
+  }
+  sendBridge({ type: 'heartbeat' })
+  const now = Date.now()
+  for (const [id, seen] of popoutSeen) {
+    if (now - seen > HEARTBEAT_TIMEOUT_MS) {
+      popoutSeen.delete(id)
+      returnToMain(entries.value.filter((e) => e.windowId === id).map((e) => e.id))
+    }
+  }
+}
+
+function reportTileStates() {
+  if (entries.value.length === 0) return
+  sendBridge({
+    type: 'state',
+    from: myWindowId,
+    items: entries.value.map((e) => ({
+      id: e.id,
+      currentTime: getPlayer(e.id)?.getCurrentTime() ?? 0,
+    })),
+  })
+}
+
+function handleBridgeMessage(msg: BridgeMessage) {
+  if (msg.type === 'hover') {
+    hoveredId.value = msg.id
+    return
+  }
+  if (isPopout) {
+    handlePopoutMessage(msg)
+  } else {
+    handleMainMessage(msg)
+  }
+}
+
+function handleMainMessage(msg: BridgeMessage) {
+  switch (msg.type) {
+    case 'hello':
+      popoutSeen.set(msg.from, Date.now())
+      sendSettings()
+      sendBridge({ type: 'audio', id: audioId.value })
+      sendDirectory()
+      break
+    case 'alive':
+      popoutSeen.set(msg.from, Date.now())
+      break
+    case 'take':
+      adoptIntoPopout(msg.from, msg.ids)
+      break
+    case 'return':
+      returnToMain(msg.ids)
+      break
+    case 'state':
+      for (const item of msg.items) {
+        remotePlayers.get(item.id)?.setCurrentTime(item.currentTime)
+      }
+      break
+    case 'event': {
+      const player = remotePlayers.get(msg.id)
+      if (!player) break
+      player.setCurrentTime(msg.currentTime)
+      if (msg.name === 'ready') {
+        applyRemoteVolumes()
+        resync(msg.id)
+      } else {
+        onTileEvent(msg.id, msg.name === 'playing' ? 'playing' : 'pause')
+      }
+      break
+    }
+    case 'set-audio':
+      setActiveAudio(msg.id)
+      break
+    case 'set-delay':
+      setDelay(msg.id, msg.seconds)
+      break
+    case 'pause-all':
+      pauseEverything()
+      break
+    case 'sync':
+      syncAll()
+      break
+    default:
+      break
+  }
+}
+
+function handlePopoutMessage(msg: BridgeMessage) {
+  switch (msg.type) {
+    case 'heartbeat':
+      lastHeartbeat = Date.now()
+      break
+    case 'main-closed':
+      window.close()
+      break
+    case 'settings':
+      lightTheme.value = msg.lightTheme
+      keepChatsLoaded.value = msg.keepChatsLoaded
+      break
+    case 'audio':
+      audioId.value = msg.id
+      break
+    case 'directory':
+      directory.value = msg.items
+      break
+    case 'adopt':
+      if (msg.to === myWindowId) entries.value.push(...msg.entries)
+      break
+    case 'drop':
+      if (msg.to === myWindowId) removeLocal(msg.id)
+      break
+    case 'patch':
+      if (msg.to === myWindowId) {
+        const entry = entries.value.find((e) => e.id === msg.id)
+        if (entry) entry.delay = msg.delay
+      }
+      break
+    case 'command':
+      if (msg.to === myWindowId) executeCommand(msg.id, msg.op, msg.value)
+      break
+    default:
+      break
+  }
+}
+
+function executeCommand(id: string, op: Operation, value?: number) {
+  const player = getPlayer(id)
+  if (!player) return
+  if (op === 'play') player.play()
+  else if (op === 'pause') player.pause()
+  else if (op === 'seek') player.seek(value ?? 0)
+  else player.setVolume(value ?? 0)
+}
+
+function sendSettings() {
+  if (isPopout) return
+  sendBridge({
+    type: 'settings',
+    lightTheme: lightTheme.value,
+    keepChatsLoaded: keepChatsLoaded.value,
+  })
+}
+
+function sendDirectory() {
+  if (isPopout) return
+  sendBridge({
+    type: 'directory',
+    items: entries.value.map((e) => ({
+      id: e.id,
+      label: e.label,
+      mode: e.mode,
+      owner: e.windowId ?? null,
+      color: vodColors.value[e.id],
+    })),
+  })
+}
+
+function setHover(id: string | null) {
+  hoveredId.value = id
+  sendBridge({ type: 'hover', id })
+}
+
+watch(entries, sendDirectory, { deep: true })
+watch([lightTheme, keepChatsLoaded], sendSettings)
+
+function adoptIntoPopout(to: string, ids: string[]) {
+  const moved = entries.value.filter((e) => ids.includes(e.id) && !e.windowId)
+  if (moved.length === 0) return
+  popoutSeen.set(to, Date.now())
+  for (const entry of moved) {
+    entry.windowId = to
+    remotePlayers.set(
+      entry.id,
+      new RemotePlayer((op, value) =>
+        sendBridge({ type: 'command', to, id: entry.id, op, value }),
+      ),
+    )
+  }
+  sendBridge({
+    type: 'adopt',
+    to,
+    entries: moved.map((e) => ({ ...e, color: vodColors.value[e.id] })),
+  })
+  sendDirectory()
+}
+
+function returnToMain(ids: string[]) {
+  const returned = entries.value.filter((e) => ids.includes(e.id) && e.windowId)
+  if (returned.length === 0) return
+  for (const entry of returned) {
+    remotePlayers.delete(entry.id)
+    entry.windowId = undefined
+  }
+  entries.value = [...entries.value.filter((e) => !returned.includes(e)), ...returned]
+  sendDirectory()
+}
+
+function openPopout() {
+  const id = Math.random().toString(36).slice(2, 10)
+  window.open(`${window.location.origin}/?popout=${id}`, `multitwitch-popout-${id}`, 'width=1280,height=720')
+}
+
+function takeSelected(ids: string[]) {
+  sendBridge({ type: 'take', from: myWindowId, ids })
+}
+
+function onTileEvent(id: string, name: 'playing' | 'pause') {
+  if (isPopout) {
+    sendBridge({
+      type: 'event',
+      from: myWindowId,
+      id,
+      name,
+      currentTime: getPlayer(id)?.getCurrentTime() ?? 0,
+    })
+    return
+  }
+  if (name === 'playing') {
+    playback.onPlayerPlaying(id)
+  } else {
+    playback.onPlayerPaused(id)
+  }
+}
+
+function applyRemoteVolumes() {
+  for (const [id, player] of remotePlayers) {
+    player.setVolume(id === audioId.value ? activeVolume.value : 0.01)
+  }
+}
+
+function setActiveAudio(id: string) {
+  if (isPopout) {
+    sendBridge({ type: 'set-audio', from: myWindowId, id })
+    return
+  }
+  setEmbedAudio(id)
+  audioId.value = id
+  sendBridge({ type: 'audio', id })
+  applyRemoteVolumes()
+}
+
+function syncAll() {
+  if (isPopout) {
+    sendBridge({ type: 'sync', from: myWindowId })
+  } else {
+    syncPlayback()
+  }
+}
+
+function pauseEverything() {
+  if (isPopout) {
+    sendBridge({ type: 'pause-all', from: myWindowId })
+    return
+  }
+  if (currentMode.value === 'vod') {
+    pause()
+  } else {
+    pauseAll()
+    for (const player of remotePlayers.values()) player.pause()
+  }
+}
+
+function playEverything() {
+  playAll()
+  for (const player of remotePlayers.values()) player.play()
+}
+
+let urlStartSeconds: number | null = null
 
 async function loadFromUrl() {
   const specs: StreamSpec[] = []
@@ -152,8 +524,6 @@ async function copyShareUrl() {
     addError.value = 'Link konnte nicht kopiert werden'
   }
 }
-
-let urlStartSeconds: number | null = null
 
 let nextId = 1
 
@@ -230,11 +600,22 @@ function handleAdd(spec: StreamSpec) {
 }
 
 function removeStream(id: string) {
+  if (isPopout) {
+    sendBridge({ type: 'return', from: myWindowId, ids: [id] })
+  } else {
+    const entry = entries.value.find((e) => e.id === id)
+    if (entry?.windowId) sendBridge({ type: 'drop', to: entry.windowId, id })
+  }
+  remotePlayers.delete(id)
+  removeLocal(id)
+}
+
+function removeLocal(id: string) {
   forget(id)
   destroyPlayer(id)
   entries.value = entries.value.filter((e) => e.id !== id)
 
-  if (entries.value.length === 0) {
+  if (localEntries.value.length === 0) {
     viewMode.value = 'tiled'
     focusedId.value = null
   } else if (focusedId.value === id) {
@@ -243,15 +624,22 @@ function removeStream(id: string) {
 }
 
 function setDelay(id: string, seconds: number) {
+  if (isPopout) {
+    sendBridge({ type: 'set-delay', from: myWindowId, id, seconds })
+    return
+  }
   const entry = entries.value.find((e) => e.id === id)
   if (!entry) return
   entry.delay = seconds
+  if (entry.windowId) {
+    sendBridge({ type: 'patch', to: entry.windowId, id, delay: seconds })
+  }
   resync(id)
 }
 
 function defaultFocusId(): string | null {
-  const audible = entries.value.find((e) => e.id === activeAudioId.value)
-  return audible?.id ?? entries.value[0]?.id ?? null
+  const audible = localEntries.value.find((e) => e.id === audioId.value)
+  return audible?.id ?? localEntries.value[0]?.id ?? null
 }
 
 function focusStream(id: string) {
@@ -268,27 +656,29 @@ function toggleViewMode() {
     viewMode.value = 'tiled'
     return
   }
-  if (entries.value.length === 0) return
+  if (localEntries.value.length === 0) return
   focusedId.value = defaultFocusId()
   viewMode.value = 'focused'
 }
 
 function handlePlayerReady(id: string) {
+  if (isPopout) {
+    sendBridge({
+      type: 'event',
+      from: myWindowId,
+      id,
+      name: 'ready',
+      currentTime: getPlayer(id)?.getCurrentTime() ?? 0,
+    })
+    return
+  }
   const isFirst = entries.value[0]?.id === id
   setInitialVolume(id, isFirst)
   resync(id)
 }
 
-function pauseEverything() {
-  if (currentMode.value === 'vod') {
-    pause()
-  } else {
-    pauseAll()
-  }
-}
-
 function getColumnCount(): string {
-  const count = entries.value.length
+  const count = localEntries.value.length
   if (count <= 1) return '1'
   if (count <= 4) return '2'
   if (count <= 9) return '3'
@@ -328,7 +718,7 @@ const latencyLabels = ref<Record<string, string>>({})
 
 function updateLatencies() {
   const labels: Record<string, string> = {}
-  for (const entry of entries.value) {
+  for (const entry of localEntries.value) {
     if (entry.mode !== 'live') continue
     const seconds = getLatency(entry.id)
     labels[entry.id] = seconds === null ? '–' : `Latenz ${seconds.toFixed(1)} s`
@@ -342,12 +732,8 @@ onMounted(() => {
   latencyTimer = window.setInterval(updateLatencies, 1000)
 })
 
-onBeforeUnmount(() => {
-  clearInterval(latencyTimer)
-})
-
 const chatChannels = computed(() => [
-  ...new Set(entries.value.filter((e) => e.mode === 'live').map((e) => e.channel)),
+  ...new Set(localEntries.value.filter((e) => e.mode === 'live').map((e) => e.channel)),
 ])
 
 const activeChatChannel = computed(() =>
@@ -358,7 +744,7 @@ const activeChatChannel = computed(() =>
 
 watch([viewMode, focusedId], () => {
   if (viewMode.value !== 'focused') return
-  const entry = entries.value.find((e) => e.id === focusedId.value)
+  const entry = localEntries.value.find((e) => e.id === focusedId.value)
   if (entry?.mode === 'live') {
     chatChannel.value = entry.channel
   }
@@ -381,7 +767,7 @@ function endChatResize() {
   chatResizing = false
 }
 
-const thumbCount = computed(() => Math.max(entries.value.length - 1, 0))
+const thumbCount = computed(() => Math.max(localEntries.value.length - 1, 0))
 const thumbRows = computed(() => (thumbCount.value > 5 ? 2 : 1))
 const thumbVars = computed(() => ({
   '--thumb-cols': String(Math.max(1, Math.ceil(thumbCount.value / thumbRows.value))),
@@ -396,8 +782,9 @@ const thumbVars = computed(() => ({
         {{ panelOpen ? '\u25C0' : '\u25B6' }}
       </button>
       <div class="panel-content" v-show="panelOpen">
+        <PopoutSelection v-if="isPopout" :items="selectableItems" @take="takeSelected" />
         <AddStreamForm
-          v-if="twitchReady"
+          v-if="twitchReady && !isPopout"
           :mode="currentMode"
           :error="addError"
           @add="handleAdd"
@@ -409,28 +796,36 @@ const thumbVars = computed(() => ({
         >
           {{ viewMode === 'tiled' ? 'Fokusmodus' : 'Kachelmodus' }}
         </button>
+        <button
+          v-if="!isPopout && entries.length > 0"
+          class="view-toggle"
+          @click="openPopout"
+        >
+          Popout erstellen
+        </button>
         <PlayerControls
-          :entries="entries"
-          :active-audio-id="activeAudioId"
+          :entries="displayEntries"
+          :readonly-ids="foreignIds"
+          :active-audio-id="audioId"
           :show-playback="showPlayback"
           :mode="currentMode"
           :colors="vodColors"
-          @hover="hoveredId = $event"
-          @play-all="playAll"
+          @hover="setHover"
+          @play-all="playEverything"
           @pause-all="pauseEverything"
-          @sync="sync"
+          @sync="syncAll"
           @remove="removeStream"
           @set-active-audio="setActiveAudio"
           @set-delay="setDelay"
         />
         <SettingsSection
-          v-if="entries.length > 0"
+          v-if="!isPopout && entries.length > 0"
           v-model:light-theme="lightTheme"
           v-model:show-latency="showLatency"
           v-model:keep-chats-loaded="keepChatsLoaded"
         />
         <button
-          v-if="entries.length > 0"
+          v-if="!isPopout && entries.length > 0"
           class="view-toggle"
           @click="copyShareUrl"
         >
@@ -451,7 +846,7 @@ const thumbVars = computed(() => ({
             v-if="currentMode !== 'vod'"
             class="icon-btn"
             title="Alle starten"
-            @click="playAll"
+            @click="playEverything"
             style="margin-bottom: 6px;"
           >&#9654;</button>
           <button
@@ -464,22 +859,22 @@ const thumbVars = computed(() => ({
             v-if="currentMode === 'vod'"
             class="icon-btn"
             title="Synchronisieren"
-            @click="sync"
+            @click="syncAll"
           >&#8635;</button>
         </template>
         <div class="spacer" style="height: 32px"></div>
-        <template v-for="entry in entries" :key="entry.id">
+        <template v-for="entry in displayEntries" :key="entry.id">
           <button
             class="icon-btn"
-            :class="{ active: activeAudioId === entry.id }"
+            :class="{ active: audioId === entry.id }"
             :title="entry.label"
             @click="setActiveAudio(entry.id)"
             style="height: 38px;"
             :style="vodColors[entry.id] ? { boxShadow: `inset 3px 0 0 ${vodColors[entry.id]}` } : undefined"
-            @mouseenter="hoveredId = entry.id"
-            @mouseleave="hoveredId = null"
+            @mouseenter="setHover(entry.id)"
+            @mouseleave="setHover(null)"
           >
-            <span v-if="activeAudioId === entry.id" class="emoji-icon">&#128266;</span>
+            <span v-if="audioId === entry.id" class="emoji-icon">&#128266;</span>
             <span v-else class="emoji-icon">&#128263;</span>
           </button>
         </template>
@@ -492,13 +887,13 @@ const thumbVars = computed(() => ({
         ref="gridEl"
         :class="{
           'focus-mode': viewMode === 'focused',
-          'has-thumbs': viewMode === 'focused' && entries.length > 1,
+          'has-thumbs': viewMode === 'focused' && localEntries.length > 1,
         }"
         :style="{ '--cols': getColumnCount(), ...thumbVars, '--strip-px': stripPxStyle }"
-        v-if="entries.length > 0"
+        v-if="localEntries.length > 0"
       >
         <div
-          v-for="entry in entries"
+          v-for="entry in localEntries"
           :key="entry.id"
           class="grid-item"
           :class="{ 'is-focused': viewMode === 'focused' && entry.id === focusedId }"
@@ -517,7 +912,7 @@ const thumbVars = computed(() => ({
             v-if="hoveredId === entry.id && vodColors[entry.id]"
             class="hover-frame"
             :style="{
-              boxShadow: `inset 0 0 0 2px ${vodColors[entry.id]}, 0 0 16px ${vodColors[entry.id]}66`,
+              boxShadow: `inset 0 0 0 4px ${vodColors[entry.id]}, 0 0 28px ${vodColors[entry.id]}`,
             }"
           ></div>
           <div
@@ -556,7 +951,7 @@ const thumbVars = computed(() => ({
           </div>
         </div>
         <div
-          v-if="viewMode === 'focused' && entries.length > 1"
+          v-if="viewMode === 'focused' && localEntries.length > 1"
           class="resize-handle"
           @pointerdown="startResize"
           @pointermove="onResize"
@@ -571,6 +966,12 @@ const thumbVars = computed(() => ({
         <p>Das Twitch-Skript konnte nicht geladen werden. Bitte Netzwerk oder Werbeblocker pruefen und die Seite neu laden.</p>
       </section>
 
+      <section class="empty-state" v-else-if="twitchReady && isPopout">
+        <div class="empty-icon">📺</div>
+        <h2>Keine Streams im Popout</h2>
+        <p>Waehle links Streams aus dem Hauptfenster aus und uebernimm sie.</p>
+      </section>
+
       <section class="empty-state" v-else-if="twitchReady">
         <div class="empty-icon">📺</div>
         <h2>Keine Streams hinzugefuegt</h2>
@@ -578,7 +979,7 @@ const thumbVars = computed(() => ({
       </section>
 
       <Timeline
-        v-if="range"
+        v-if="range && !isPopout"
         :start="range.start"
         :end="range.end"
         :position="position"
@@ -758,16 +1159,18 @@ const thumbVars = computed(() => ({
   pointer-events: none;
   border-radius: 2px;
   animation:
-    hover-frame-in 0.2s ease-out,
-    hover-frame-pulse 2.4s ease-in-out 0.2s infinite;
+    hover-frame-in 0.25s ease-out,
+    hover-frame-pulse 1.4s ease-in-out 0.25s infinite;
 }
 
 @keyframes hover-frame-in {
   from {
     opacity: 0;
+    transform: scale(0.98);
   }
   to {
     opacity: 1;
+    transform: scale(1);
   }
 }
 
@@ -775,9 +1178,11 @@ const thumbVars = computed(() => ({
   0%,
   100% {
     opacity: 1;
+    transform: scale(1);
   }
   50% {
-    opacity: 0.6;
+    opacity: 0.45;
+    transform: scale(0.99);
   }
 }
 

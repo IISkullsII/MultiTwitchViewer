@@ -16,6 +16,8 @@ export interface StreamEntry {
   delay: number
   vodStart?: number
   duration?: number
+  windowId?: string
+  color?: string
 }
 
 export type VodEntry = StreamEntry & { vodStart: number; duration: number }

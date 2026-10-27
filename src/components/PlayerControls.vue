@@ -1,13 +1,17 @@
 <script setup lang="ts">
 import type { PlayerMode, StreamEntry } from '../types'
 
-defineProps<{
-  entries: StreamEntry[]
-  activeAudioId: string | null
-  showPlayback: boolean
-  mode: PlayerMode | null
-  colors: Record<string, string>
-}>()
+const props = withDefaults(
+  defineProps<{
+    entries: StreamEntry[]
+    activeAudioId: string | null
+    showPlayback: boolean
+    mode: PlayerMode | null
+    colors: Record<string, string>
+    readonlyIds?: string[]
+  }>(),
+  { readonlyIds: () => [] },
+)
 
 const emit = defineEmits<{
   playAll: []
@@ -58,7 +62,7 @@ function onDelayChange(id: string, evt: Event) {
             :style="colors[entry.id] ? { borderLeft: `3px solid ${colors[entry.id]}` } : undefined"
           >
             <span class="stream-name">{{ entry.label }}</span>
-            <span class="delay-field" v-if="entry.mode === 'vod'" title="Verzoegerung in Sekunden">
+            <span class="delay-field" v-if="entry.mode === 'vod' && !props.readonlyIds.includes(entry.id)" title="Verzoegerung in Sekunden">
               <input
                 class="delay-input"
                 type="number"
@@ -69,6 +73,7 @@ function onDelayChange(id: string, evt: Event) {
               <span class="delay-unit">s</span>
             </span>
             <button
+              v-if="!props.readonlyIds.includes(entry.id)"
               class="btn-remove"
               title="Entfernen"
               @click.stop="emit('remove', entry.id)"
