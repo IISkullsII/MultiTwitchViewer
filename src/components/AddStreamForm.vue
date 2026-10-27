@@ -37,11 +37,26 @@ let sectionDepth = 0
 
 function hasChannelData(e: DragEvent): boolean {
   const types = Array.from(e.dataTransfer?.types ?? [])
-  return types.includes('text/uri-list') || types.includes('text/plain')
+  return types.length > 0 && !types.includes('Files')
+}
+
+function extractUrl(dt: DataTransfer): string | null {
+  for (const type of ['text/uri-list', 'text/x-moz-url', 'text/plain']) {
+    const raw = dt.getData(type)
+    const line = raw
+      .split('\n')
+      .map((s) => s.trim())
+      .find((s) => s.length > 0 && !s.startsWith('#'))
+    if (line) return line
+  }
+  return null
 }
 
 function onWindowDragEnter(e: DragEvent) {
   if (!hasChannelData(e)) return
+  if (windowDepth === 0) {
+    console.log('[drag] types on enter:', Array.from(e.dataTransfer?.types ?? [])) // DEBUG-TEMP
+  }
   windowDepth++
   dragActive.value = true
 }
@@ -84,14 +99,15 @@ function onSectionDrop(e: DragEvent) {
   if (!hasChannelData(e) || !e.dataTransfer) return
   e.preventDefault()
   onWindowDrop()
-  const raw = e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain')
-  const line = raw
-    .split('\n')
-    .map((s) => s.trim())
-    .find((s) => s.length > 0 && !s.startsWith('#'))
-  if (!line) return
-  const result = parseStreamInput(line)
-  if (!result) return
+  console.log('[drag] types on drop:', Array.from(e.dataTransfer.types)) // DEBUG-TEMP
+  const url = extractUrl(e.dataTransfer)
+  console.log('[drag] extracted url:', url) // DEBUG-TEMP
+  if (!url) return
+  const result = parseStreamInput(url)
+  if (!result) {
+    console.log('[drag] url not recognized as Twitch channel or VOD:', url) // DEBUG-TEMP
+    return
+  }
   emit('add', { channel: result.channel, mode: result.mode, vodId: result.vodId, delay: 0 })
 }
 
