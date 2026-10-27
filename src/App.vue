@@ -363,8 +363,8 @@ const thumbVars = computed(() => ({
           @add="handleAdd"
         />
         <button
+          v-if="entries.length > 0"
           class="view-toggle"
-          :disabled="entries.length === 0"
           @click="toggleViewMode"
         >
           {{ viewMode === 'tiled' ? 'Fokusmodus' : 'Kachelmodus' }}
@@ -384,6 +384,7 @@ const thumbVars = computed(() => ({
           @set-delay="setDelay"
         />
         <SettingsSection
+          v-if="entries.length > 0"
           v-model:light-theme="lightTheme"
           v-model:show-latency="showLatency"
           v-model:keep-chats-loaded="keepChatsLoaded"
@@ -392,13 +393,13 @@ const thumbVars = computed(() => ({
       <div class="panel-compact" v-show="!panelOpen">
         <div class="spacer" style="height: 136px"></div>
         <button
+          v-if="entries.length > 0"
           class="icon-btn"
           :title="viewMode === 'tiled' ? 'Fokusmodus' : 'Kachelmodus'"
-          :disabled="entries.length === 0"
           @click="toggleViewMode"
           style="margin-bottom: 6px;"
         >&#9633;</button>
-        <template v-if="showPlayback">
+        <template v-if="showPlayback && entries.length > 0">
           <button
             v-if="currentMode !== 'vod'"
             class="icon-btn"

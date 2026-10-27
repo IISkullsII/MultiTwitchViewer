@@ -37,6 +37,7 @@ export interface PlaybackHandlers {
 
 export function useTwitchEmbed(handlers?: PlaybackHandlers) {
   const playerInstances = new Map<string, TwitchPlayer>()
+  const playerListeners = new Map<string, { playing: () => void; pause: () => void }>()
   const iframeReady = ref(false)
   const activeAudioId = ref<string | null>(null)
   const activeVolume = ref(0.74)
@@ -104,7 +105,6 @@ export function useTwitchEmbed(handlers?: PlaybackHandlers) {
       parent: parentParam,
       autoplay: false,
       muted: false,
-      allowfullscreen: true,
     }
 
     if (entry.mode === 'live') {
@@ -120,8 +120,13 @@ export function useTwitchEmbed(handlers?: PlaybackHandlers) {
 
     const player = new window.Twitch.Player(containerId, options)
     playerInstances.set(entry.id, player)
-    player.addEventListener('playing', () => handlers?.onPlaying(entry.id))
-    player.addEventListener('pause', () => handlers?.onPaused(entry.id))
+    const listeners = {
+      playing: () => handlers?.onPlaying(entry.id),
+      pause: () => handlers?.onPaused(entry.id),
+    }
+    player.addEventListener('playing', listeners.playing)
+    player.addEventListener('pause', listeners.pause)
+    playerListeners.set(entry.id, listeners)
     return player
   }
 
@@ -142,6 +147,13 @@ export function useTwitchEmbed(handlers?: PlaybackHandlers) {
   function destroyPlayer(id: string) {
     const player = playerInstances.get(id)
     if (!player) return
+
+    const listeners = playerListeners.get(id)
+    if (listeners) {
+      player.removeEventListener('playing', listeners.playing)
+      player.removeEventListener('pause', listeners.pause)
+      playerListeners.delete(id)
+    }
 
     player.destroy()
     playerInstances.delete(id)

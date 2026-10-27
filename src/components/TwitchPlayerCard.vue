@@ -16,15 +16,19 @@ const emit = defineEmits<{
 const containerId = `twitch-player-${props.entry.id}`
 const hasError = ref(false)
 
+let player: TwitchPlayerType | null = null
+
+function onReady() {
+  emit('playerReady', props.entry.id)
+}
+
 function initPlayer() {
-  const player = props.createPlayer(containerId, props.entry)
+  player = props.createPlayer(containerId, props.entry)
   if (!player) {
     hasError.value = true
     return
   }
-  player.addEventListener('ready', () => {
-    emit('playerReady', props.entry.id)
-  })
+  player.addEventListener('ready', onReady)
 }
 
 onMounted(() => {
@@ -32,6 +36,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  player?.removeEventListener('ready', onReady)
   props.destroyPlayer(props.entry.id)
 })
 </script>
