@@ -5,6 +5,7 @@ const lightTheme = defineModel<boolean>('lightTheme', { required: true })
 const showLatency = defineModel<boolean>('showLatency', { required: true })
 const keepChatsLoaded = defineModel<boolean>('keepChatsLoaded', { required: true })
 const hidePopoutPanels = defineModel<boolean>('hidePopoutPanels', { required: true })
+const squadSuggestions = defineModel<boolean>('squadSuggestions', { required: true })
 
 defineProps<{
   vodMode: boolean
@@ -35,6 +36,10 @@ const open = ref(false)
       <label v-if="vodMode" class="setting-row">
         <span>Seitenpanel in Popouts ausblenden</span>
         <input v-model="hidePopoutPanels" type="checkbox" />
+      </label>
+      <label class="setting-row">
+        <span>SquadStream Vorschläge (experimentell)</span>
+        <input v-model="squadSuggestions" type="checkbox" />
       </label>
     </div>
   </div>

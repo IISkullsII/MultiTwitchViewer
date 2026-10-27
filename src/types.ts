@@ -18,6 +18,7 @@ export interface StreamEntry {
   duration?: number
   windowId?: string
   color?: string
+  groupId?: string
 }
 
 export type VodEntry = StreamEntry & { vodStart: number; duration: number }

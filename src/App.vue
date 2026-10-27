@@ -30,6 +30,8 @@ import PlayerControls from './components/PlayerControls.vue'
 import SettingsSection from './components/SettingsSection.vue'
 import ChatPanel from './components/ChatPanel.vue'
 import Timeline from './components/Timeline.vue'
+import SquadSuggestions from './components/SquadSuggestions.vue'
+import { fetchTogetherGroup, type TogetherGroup, type TogetherMember } from './services/streamTogether'
 import PopoutSelection from './components/PopoutSelection.vue'
 
 const popoutId = new URLSearchParams(window.location.search).get('popout')
@@ -576,6 +578,72 @@ function addEntry(spec: StreamSpec, info?: VideoInfo) {
     vodStart: info?.startDate.getTime(),
     duration: info?.duration,
   })
+  const created = entries.value[entries.value.length - 1]
+  if (created.mode === 'live' && !isPopout && squadSuggestions.value) {
+    const group = groupForLogin(created.channel)
+    if (group) {
+      created.groupId = group.id
+    } else {
+      void resolveGroup(created.id)
+    }
+  }
+}
+
+const groups = ref<TogetherGroup[]>([])
+
+function groupForLogin(login: string): TogetherGroup | undefined {
+  const key = login.toLowerCase()
+  return groups.value.find((g) => g.members.some((m) => m.login === key))
+}
+
+async function resolveGroup(entryId: string) {
+  const entry = entries.value.find((e) => e.id === entryId)
+  if (!entry) return
+  const group = await fetchTogetherGroup(entry.channel)
+  if (!group) return
+  if (!entries.value.some((e) => e.id === entryId)) return
+
+  if (!groups.value.some((g) => g.id === group.id)) {
+    groups.value.push(group)
+  }
+  const stored = groups.value.find((g) => g.id === group.id)
+  if (!stored) return
+  for (const e of entries.value) {
+    if (e.mode === 'live' && stored.members.some((m) => m.login === e.channel.toLowerCase())) {
+      e.groupId = stored.id
+    }
+  }
+}
+
+function pruneGroups() {
+  groups.value = groups.value.filter((g) => entries.value.some((e) => e.groupId === g.id))
+}
+
+const squadSuggestions = ref(false)
+
+watch(squadSuggestions, (enabled) => {
+  if (!enabled) {
+    groups.value = []
+    return
+  }
+  for (const entry of entries.value) {
+    if (entry.mode !== 'live' || entry.groupId) continue
+    const group = groupForLogin(entry.channel)
+    if (group) entry.groupId = group.id
+    else void resolveGroup(entry.id)
+  }
+})
+
+const suggestionMembers = computed<TogetherMember[]>(() => {
+  if (isPopout || !squadSuggestions.value) return []
+  const liveLogins = new Set(
+    entries.value.filter((e) => e.mode === 'live').map((e) => e.channel.toLowerCase()),
+  )
+  return groups.value.flatMap((g) => g.members.filter((m) => !liveLogins.has(m.login)))
+})
+
+function addSuggestion(member: TogetherMember) {
+  void addStreams([{ channel: member.login, mode: 'live', vodId: '', delay: 0 }], true)
 }
 
 async function addStreams(specs: StreamSpec[], allowRedirect: boolean) {
@@ -677,6 +745,7 @@ function removeLocal(id: string) {
   forget(id)
   destroyPlayer(id)
   entries.value = entries.value.filter((e) => e.id !== id)
+  pruneGroups()
 
   if (localEntries.value.length === 0) {
     viewMode.value = 'tiled'
@@ -894,12 +963,18 @@ const thumbPlacement = computed(() => {
           @set-active-audio="setActiveAudio"
           @set-delay="setDelay"
         />
+        <SquadSuggestions
+          v-if="!isPopout && suggestionMembers.length > 0"
+          :members="suggestionMembers"
+          @add="addSuggestion"
+        />
         <SettingsSection
           v-if="!isPopout && entries.length > 0"
           v-model:light-theme="lightTheme"
           v-model:show-latency="showLatency"
           v-model:keep-chats-loaded="keepChatsLoaded"
           v-model:hide-popout-panels="hidePopoutPanels"
+          v-model:squad-suggestions="squadSuggestions"
           :vod-mode="currentMode === 'vod'"
         />
         <button
