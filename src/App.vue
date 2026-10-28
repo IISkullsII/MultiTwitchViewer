@@ -8,6 +8,7 @@ import { parseStreamInput } from './utils/parseStreamInput'
 import { formatTimeParam, parseTimeParam } from './utils/timeParam'
 import { VOD_COLORS } from './utils/colors'
 import { APP_BASE } from './config'
+import { version as appVersion, commit as appCommit, build as appBuild } from 'virtual:app-version'
 import {
   onBridge,
   sendBridge,
@@ -145,9 +146,7 @@ const vodColors = computed(() => {
 
 const hoveredId = ref<string | null>(null)
 
-const appVersion = __APP_VERSION__
-const appCommit = __APP_COMMIT__
-const appBuild = __APP_BUILD__
+
 
 const timelineBars = computed(() =>
   bars.value.map((bar) => ({ ...bar, color: vodColors.value[bar.id] })),

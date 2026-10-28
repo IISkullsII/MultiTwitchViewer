@@ -1,11 +1,7 @@
 /// <reference types="vite/client" />
 
-declare const __APP_VERSION__: string
-declare const __APP_COMMIT__: string
-declare const __APP_BUILD__: string
-
-declare module '*.vue' {
-  import type { DefineComponent } from 'vue'
-  const component: DefineComponent<object, object, unknown>
-  export default component
+declare module 'virtual:app-version' {
+  export const version: string
+  export const commit: string
+  export const build: string
 }
