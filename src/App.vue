@@ -1012,11 +1012,17 @@ const thumbPlacement = computed(() => {
           v-for="entry in localEntries"
           :key="entry.id"
           class="grid-item"
-          :class="{ 'is-focused': viewMode === 'focused' && entry.id === focusedId }"
-          :style="thumbPlacement[entry.id] ? {
-            gridRow: String(thumbPlacement[entry.id].row),
-            gridColumn: String(thumbPlacement[entry.id].col),
-          } : undefined"
+          :class="{
+            'is-focused': viewMode === 'focused' && entry.id === focusedId,
+            'is-hovered': hoveredId === entry.id && vodColors[entry.id],
+          }"
+          :style="{
+            '--tile-color': vodColors[entry.id],
+            ...(thumbPlacement[entry.id] ? {
+              gridRow: String(thumbPlacement[entry.id].row),
+              gridColumn: String(thumbPlacement[entry.id].col),
+            } : {}),
+          }"
         >
           <TwitchPlayerCard
             :entry="entry"
@@ -1024,13 +1030,6 @@ const thumbPlacement = computed(() => {
             :destroy-player="destroyPlayer"
             @player-ready="handlePlayerReady"
           />
-          <div
-            v-if="hoveredId === entry.id && vodColors[entry.id]"
-            class="hover-frame"
-            :style="{
-              boxShadow: `inset 0 0 0 4px ${vodColors[entry.id]}, 0 0 28px ${vodColors[entry.id]}`,
-            }"
-          ></div>
           <div
             v-if="viewMode === 'focused' && entry.id !== focusedId"
             class="thumb-overlay"
@@ -1278,42 +1277,23 @@ const thumbPlacement = computed(() => {
   grid-row: 1;
 }
 
-.hover-frame {
-  position: absolute;
-  inset: 0;
-  z-index: 3;
-  pointer-events: none;
-  border-radius: 2px;
-  animation:
-    hover-frame-in 0.25s ease-out,
-    hover-frame-pulse 1.4s ease-in-out 0.25s infinite;
+.grid-item.is-hovered {
+  outline: 2px solid var(--tile-color);
+  animation: tile-glow 1.6s ease-in-out infinite;
 }
 
-@keyframes hover-frame-in {
-  from {
-    opacity: 0;
-    transform: scale(0.98);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
-@keyframes hover-frame-pulse {
+@keyframes tile-glow {
   0%,
   100% {
-    opacity: 1;
-    transform: scale(1);
+    outline-color: color-mix(in srgb, var(--tile-color) 35%, transparent);
   }
   50% {
-    opacity: 0.45;
-    transform: scale(0.99);
+    outline-color: var(--tile-color);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .hover-frame {
+  .grid-item.is-hovered {
     animation: none;
   }
 }
