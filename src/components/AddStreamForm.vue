@@ -41,13 +41,24 @@ function hasChannelData(e: DragEvent): boolean {
 }
 
 function extractUrl(dt: DataTransfer): string | null {
-  for (const type of ['text/uri-list', 'text/x-moz-url', 'text/plain']) {
+  const candidates = [
+    'text/uri-list',
+    'text/x-moz-url',
+    'text/x-moz-url-data',
+    'text/plain',
+    'text/html',
+  ]
+  for (const type of candidates) {
     const raw = dt.getData(type)
+    console.log('[drag] data', type, 'length', raw.length) // DEBUG-TEMP
+    if (!raw) continue
+    const href = raw.match(/https?:\/\/[^\s"'<>]+/)
     const line = raw
       .split('\n')
       .map((s) => s.trim())
       .find((s) => s.length > 0 && !s.startsWith('#'))
-    if (line) return line
+    const found = href?.[0] ?? line
+    if (found) return found
   }
   return null
 }
@@ -98,10 +109,10 @@ function onSectionDragOver(e: DragEvent) {
 function onSectionDrop(e: DragEvent) {
   if (!hasChannelData(e) || !e.dataTransfer) return
   e.preventDefault()
-  onWindowDrop()
   console.log('[drag] types on drop:', Array.from(e.dataTransfer.types)) // DEBUG-TEMP
   const url = extractUrl(e.dataTransfer)
   console.log('[drag] extracted url:', url) // DEBUG-TEMP
+  onWindowDrop()
   if (!url) return
   const result = parseStreamInput(url)
   if (!result) {
