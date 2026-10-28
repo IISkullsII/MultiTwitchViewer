@@ -1,0 +1,14 @@
+#!/bin/sh
+
+while read local_ref local_sha remote_ref remote_sha; do
+  if [ "$remote_ref" = "refs/heads/main" ]; then
+    git fetch origin main --quiet 2>/dev/null
+    new_version=$(node -p "require('./package.json').version")
+    old_version=$(git show origin/main:package.json 2>/dev/null | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).version))")
+    if [ -n "$old_version" ] && [ "$new_version" = "$old_version" ]; then
+      echo "Version $new_version is unchanged compared to origin/main."
+      echo "Bump the version first, for example: npm version minor --no-git-tag-version"
+      exit 1
+    fi
+  fi
+done

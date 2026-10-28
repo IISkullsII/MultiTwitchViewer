@@ -145,6 +145,10 @@ const vodColors = computed(() => {
 
 const hoveredId = ref<string | null>(null)
 
+const appVersion = __APP_VERSION__
+const appCommit = __APP_COMMIT__
+const appBuild = __APP_BUILD__
+
 const timelineBars = computed(() =>
   bars.value.map((bar) => ({ ...bar, color: vodColors.value[bar.id] })),
 )
@@ -948,6 +952,9 @@ const thumbPlacement = computed(() => {
           {{ copied ? 'Link kopiert' : 'Link kopieren' }}
         </button>
       </div>
+      <div v-if="!isPopout && panelOpen" class="app-version" :title="`Build ${appBuild}`">
+        v{{ appVersion }} · {{ appCommit }}
+      </div>
       <div class="panel-compact" v-show="!panelOpen">
         <div class="spacer" style="height: 136px"></div>
         <button
@@ -1187,6 +1194,17 @@ const thumbPlacement = computed(() => {
   gap: 16px;
   padding: 16px;
   padding-top: 36px;
+}
+
+.app-version {
+  position: sticky;
+  bottom: 8px;
+  margin-top: auto;
+  padding: 0 16px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-secondary);
+  opacity: 0.7;
 }
 
 .panel-compact {

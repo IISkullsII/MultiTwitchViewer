@@ -19,6 +19,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+      - name: Check that the version was bumped
+        if: github.event_name == 'push'
+        run: |
+          NEW=$(node -p "require('./package.json').version")
+          OLD=$(git show HEAD~1:package.json | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).version))")
+          if [ "$NEW" = "$OLD" ]; then
+            echo "Version $NEW is unchanged compared to the previous commit. Bump the version before merging to main."
+            exit 1
+          fi
       - uses: actions/setup-node@v7
         with:
           node-version: 22
