@@ -45,7 +45,7 @@ function appVersionPlugin(): Plugin {
 }
 
 export default defineConfig(({ command }) => ({
-  base: process.env.GITHUB_ACTIONS ? '/MultiTwitchViewer/' : '/',
+  base: '/',
   plugins: [vue(), appVersionPlugin()],
   esbuild: command === 'build'
     ? { pure: ['console.log', 'console.info', 'console.debug'] }
