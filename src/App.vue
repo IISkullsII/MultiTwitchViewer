@@ -1257,13 +1257,13 @@ const thumbPlacement = computed(() => {
   grid-template-columns: repeat(var(--cols), 1fr);
   gap: 2px;
   overflow: hidden;
+  padding: 2px;
 }
 
 .grid-item {
   position: relative;
   overflow: hidden;
   padding: 1px;
-  margin: 3px;
 }
 
 .grid.focus-mode {
