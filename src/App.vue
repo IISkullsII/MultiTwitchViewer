@@ -131,16 +131,17 @@ const displayEntries = computed(() => (isPopout ? popoutSidebar.value : sidebarE
 const vodColors = computed(() => {
   const map: Record<string, string> = {}
   if (isPopout) {
+    for (const item of directory.value) {
+      if (item.color) map[item.id] = item.color
+    }
     for (const e of entries.value) {
       if (e.color) map[e.id] = e.color
     }
     return map
   }
-  entries.value
-    .filter((e) => e.mode === 'vod')
-    .forEach((e, idx) => {
-      map[e.id] = VOD_COLORS[idx % VOD_COLORS.length]
-    })
+  entries.value.forEach((e, idx) => {
+    map[e.id] = VOD_COLORS[idx % VOD_COLORS.length]
+  })
   return map
 })
 
