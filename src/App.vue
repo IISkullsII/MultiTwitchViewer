@@ -1297,7 +1297,7 @@ const thumbPlacement = computed(() => {
 }
 
 .grid-item.is-hovered {
-  outline: 3px solid var(--tile-color);
+  outline: 2px solid var(--tile-color);
   animation: tile-glow 1.6s ease-in-out infinite;
 }
 
