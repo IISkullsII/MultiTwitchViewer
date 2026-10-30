@@ -1263,6 +1263,7 @@ const thumbPlacement = computed(() => {
   position: relative;
   overflow: hidden;
   padding: 1px;
+  margin: 3px;
 }
 
 .grid.focus-mode {
@@ -1296,7 +1297,7 @@ const thumbPlacement = computed(() => {
 }
 
 .grid-item.is-hovered {
-  outline: 2px solid var(--tile-color);
+  outline: 3px solid var(--tile-color);
   animation: tile-glow 1.6s ease-in-out infinite;
 }
 
